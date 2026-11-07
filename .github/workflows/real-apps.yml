@@ -7,6 +7,9 @@ on:
       runs:
         description: measured runs per condition
         default: "5"
+      variants:
+        description: "variants to run (space separated; empty = all)"
+        default: ""
       task:
         description: "report: hayate boot-report / variants: bench/boot_variants.rb"
         type: choice
@@ -85,7 +88,7 @@ jobs:
             -v "$PWD:/hayate:ro" -v "$PWD/out:/out" -w ${{ matrix.dir }} ${{ matrix.image }} -c '
               set -e
               ${{ matrix.prep }}
-              ruby /hayate/bench/boot_variants.rb ${{ inputs.runs }} > /out/report.txt
+              ruby /hayate/bench/boot_variants.rb ${{ inputs.runs }} ${{ inputs.variants }} > /out/report.txt
             '
       - name: Summary
         if: always()

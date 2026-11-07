@@ -27,6 +27,8 @@ CHILD = <<~'RUBY'
   t = now.()
   require "./config/environment"
   r = { "boot" => now.() - t }
+  # tzinfo-data のゾーン定義が起動時にいくつ読み込まれたか (zoneinfo の場合は 0)
+  r["tz_defs"] = $LOADED_FEATURES.count { _1.include?("/tzinfo/data/definitions/") }
   # 最初のリクエストが払うコストの代わりに、よく使う処理を 1 回ずつ測る
   t = now.(); s = I18n.t("errors.messages.blank", locale: :en); r["first_t_en"] = now.() - t
   r["t_ok"] = !s.to_s.include?("translation missing")
@@ -59,17 +61,17 @@ rows = names.map do |name|
   row = { "variant" => name }
   keys.each { |k| row[k] = med.(samples.map { _1[k] }) }
   last = samples.last
-  %w[t_ok controllers routes devise_mappings].each { |k| row[k] = last[k] }
+  %w[t_ok controllers routes devise_mappings tz_defs].each { |k| row[k] = last[k] }
   row
 ensure
   File.delete(FILE) if File.exist?(FILE)
 end
 
 base = rows.find { _1["variant"] == "base" }&.fetch("boot")
-puts "| variant | boot ms | vs base | first t(:en) | first zone | all action_methods | routes access | t ok | controllers | routes | devise mappings |"
-puts "|---|---|---|---|---|---|---|---|---|---|---|"
+puts "| variant | boot ms | vs base | first t(:en) | first zone | all action_methods | routes access | t ok | controllers | routes | devise mappings | tz defs loaded |"
+puts "|---|---|---|---|---|---|---|---|---|---|---|---|"
 rows.each do |r|
   diff = base && r["boot"] ? format("%+.1f", r["boot"] - base) : "-"
   puts "| #{r["variant"]} | #{fmt.(r["boot"])} | #{diff} | #{fmt.(r["first_t_en"])} | #{fmt.(r["first_zone"])} | " \
-       "#{fmt.(r["all_action_methods"])} | #{fmt.(r["routes_access"])} | #{r["t_ok"]} | #{r["controllers"]} | #{r["routes"]} | #{fmt.(r["devise_mappings"])} |"
+       "#{fmt.(r["all_action_methods"])} | #{fmt.(r["routes_access"])} | #{r["t_ok"]} | #{r["controllers"]} | #{r["routes"]} | #{fmt.(r["devise_mappings"])} | #{r["tz_defs"]} |"
 end
