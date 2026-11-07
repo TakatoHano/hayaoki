@@ -1,0 +1,7 @@
+/Gemfile.lock
+/pkg/
+/tmp/
+*.gem
+.bundle/
+test/fixtures/**/Gemfile.lock
+spike/**/*.json

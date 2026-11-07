@@ -1,0 +1,1 @@
+class Admin::Thing; end
