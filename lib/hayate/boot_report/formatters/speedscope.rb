@@ -25,11 +25,24 @@ module Hayate
 
         # RunResult の payloads (Hash) / 配列 / 単一 payload を受け付ける。
         def format(input, condition: nil)
-          payload = pick(input, condition)
-          ::JSON.generate(build(payload)) + "\n"
+          picks = pick_all(input, condition)
+          docs = picks.map { |name, payload| build(payload, name: name) }
+          doc = docs.first
+          if docs.size > 1
+            # 条件ごとに profile を持つ 1 ファイルにまとめる (frame は条件ごとの添字がずれるので付け替える)
+            frames = []
+            profiles = docs.each_with_index.map do |d, di|
+              map = d["shared"]["frames"].map { |f| frames << f; frames.size - 1 }
+              prof = d["profiles"].first.dup
+              prof["events"] = prof["events"].map { |e| e.merge("frame" => map[e["frame"]]) }
+              prof
+            end
+            doc = doc.merge("shared" => { "frames" => frames }, "profiles" => profiles)
+          end
+          ::JSON.generate(doc) + "\n"
         end
 
-        def build(payload)
+        def build(payload, name: @name)
           w = payload["width"] || 8
           ev = payload["events"] || []
           exit_us = payload["exit_us"] || ev.each_slice(w).filter_map { |e| e[4] }.max || 0
@@ -68,13 +81,24 @@ module Hayate
           {
             "$schema" => SCHEMA,
             "shared" => { "frames" => frames },
-            "profiles" => [{ "type" => "evented", "name" => @name, "unit" => "microseconds",
+            "profiles" => [{ "type" => "evented", "name" => name, "unit" => "microseconds",
                              "startValue" => 0, "endValue" => end_value, "events" => events }],
             "name" => @name, "activeProfileIndex" => 0, "exporter" => "hayate #{Hayate::VERSION}"
           }
         end
 
         private
+
+        # [[profile 名, payload], ...]。condition 指定が無く複数条件 (bootsnap: both) なら条件ごとに出す。
+        def pick_all(input, condition)
+          if !condition && !input.is_a?(Array) && !(input.is_a?(Hash) && input.key?("events"))
+            map = input.is_a?(Hash) ? input : input.payloads
+            if map.size > 1
+              return map.map { |c, list| ["#{@name} [#{c}]", self.class.pick_median(list)] }
+            end
+          end
+          [[@name, pick(input, condition)]]
+        end
 
         def pick(input, condition)
           case input

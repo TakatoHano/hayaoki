@@ -54,6 +54,7 @@ module Hayate
         o.on("--no-suggestions", "do not print improvement suggestions") { opts[:suggestions] = false }
         o.on("--initializer-threshold MS", Float, "app initializer threshold for suggestions (default 50)") { |v| opts[:initializer_threshold] = v }
         o.on("--gem-threshold MS", Float, "gem self time threshold for suggestions (default 30)") { |v| opts[:gem_threshold] = v }
+        o.on("--redact", "replace home dir with ~, app root with <app>, gem paths with <gem:name> (json/speedscope)") { opts[:redact] = true }
         o.on("--version", "show version") { opts[:action] = :version }
         o.on("-h", "--help", "show this help") { opts[:action] = :help }
       end
@@ -92,14 +93,26 @@ module Hayate
       result = runner.run
       text = render(result, opts, app_dir)
       if opts[:output]
-        File.write(opts[:output], text)
+        begin
+          File.write(opts[:output], text)
+        rescue SystemCallError => e
+          @err.puts "hayate: cannot write #{opts[:output]}: #{e.message}"
+          return 1
+        end
         @err.puts "wrote #{opts[:output]}"
       else
         @out.write(text)
       end
       0
     rescue BootReport::RunError => e
-      report_error(e)
+      report_error(e, opts)
+      1
+    rescue Errno::ENOENT => e
+      @err.puts "hayate: could not start the child process (--ruby #{opts[:ruby].inspect}, APP_DIR #{app_dir.inspect}): #{e.message}"
+      @err.puts "Check that the --ruby executable exists and is on PATH."
+      1
+    rescue SystemCallError => e
+      @err.puts "hayate: #{e.message}"
       1
     end
 
@@ -141,7 +154,14 @@ module Hayate
       end
     end
 
-    def report_error(e)
+    SECRET_HINT = /credentials|secret_key_base|master[ _.]?key|RAILS_MASTER_KEY/i
+
+    def report_error(e, opts = {})
+      case e.reason
+      when :app_dir, :no_lockfile, :interrupted
+        @err.puts "hayate: #{e.message.lines.first.to_s.strip}"
+        return
+      end
       @err.puts "hayate: boot failed (#{e.reason})"
       @err.puts e.message.lines.first.to_s.strip
       if e.probe_error
@@ -154,6 +174,33 @@ module Hayate
         @err.puts "--- stderr (tail) ---"
         @err.puts e.stderr_tail.lines.last(20).join
       end
+      production_hint(e, opts)
+    end
+
+    # production で credentials / secret_key_base / master key 周りで落ちたときの案内。
+    def production_hint(e, opts)
+      return unless (opts[:env] || "production") == "production"
+      text = "#{e.stderr_tail}\n#{e.message}\n#{e.probe_error && e.probe_error["message"]}"
+      return unless text.match?(SECRET_HINT)
+      @err.puts "hint: booting with RAILS_ENV=production failed on credentials / secret_key_base / master key."
+      @err.puts "  - set SECRET_KEY_BASE_DUMMY=1 (Rails 7.1+) or RAILS_MASTER_KEY in the environment, then re-run"
+      @err.puts "  - or measure another environment with --env (e.g. --env staging)"
+      @err.puts "  - note: the measurement boots your app with the production configuration, which may connect to external services"
     end
   end
+end
+
+# --redact: render の結果 (json / speedscope のみ) のパスを伏せる。既存の render を書き換えずに差し込む。
+module Hayate
+  module CLIRedact
+    private
+
+    def render(result, opts, app_dir = Dir.pwd)
+      text = super
+      return text unless opts[:redact] && %w[json speedscope].include?(opts[:format])
+      require_relative "boot_report/formatters/redact"
+      BootReport::Formatters::Redact.new(app_dir: app_dir).apply(text)
+    end
+  end
+  CLI.prepend(CLIRedact)
 end

@@ -98,3 +98,18 @@ class BootReportFormattersTest < Minitest::Test
     assert_equal 4, prof["events"].count { _1["type"] == "O" }
   end
 end
+
+class BootReportFormattersExtraTest < Minitest::Test
+  def test_redact
+    require "hayate/boot_report/formatters/redact"
+    r = Hayate::BootReport::Formatters::Redact.new(app_dir: "/Users/x/app", home: "/Users/x")
+    out = r.apply('["/Users/x/app/a.rb","/Users/x/.gem/ruby/3.4.0/gems/rack-3.0.1/lib/rack.rb","/Users/x/y"]')
+    assert_equal '["<app>/a.rb","<gem:rack>/lib/rack.rb","~/y"]', out
+  end
+
+  def test_cli_accepts_redact
+    require "hayate/cli"
+    opts, = Hayate::CLI.new.parse(%w[--redact])
+    assert opts[:redact]
+  end
+end

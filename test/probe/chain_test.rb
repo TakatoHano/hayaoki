@@ -91,14 +91,14 @@ class ProbeChainTest < Minitest::Test
     code = <<~'RUBY'
       p Kernel.ancestors.first == Kernel
       p Kernel.singleton_class.ancestors.first == Kernel.singleton_class
-      p %i[require load require_relative __hayate_require __hayate_load __hayate_require_relative].map { |m| Kernel.private_method_defined?(m) }
+      p %i[require load require_relative __hayate_require __hayate_load].map { |m| Kernel.private_method_defined?(m) }
       p Kernel.respond_to?(:require), Kernel.respond_to?(:load)
       p Kernel.singleton_class.private_method_defined?(:__hayate_require)
       p ENV.key?("HAYATE_PROBE_OUT"), ENV.key?("HAYATE_SPAWN_AT")
       p $LOADED_FEATURES.grep(/json/).empty?
     RUBY
     r = run_probe(code, env: { "HAYATE_SPAWN_AT" => "123.5" })
-    assert_equal ["true", "true", "[true, true, true, true, true, true]", "true", "true", "true", "false", "false", "true"], r.out.lines.map(&:strip).flat_map { |l| l.start_with?("[") ? [l] : l.split(", ") }
+    assert_equal ["true", "true", "[true, true, true, true, true]", "true", "true", "true", "false", "false", "true"], r.out.lines.map(&:strip).flat_map { |l| l.start_with?("[") ? [l] : l.split(", ") }
     assert_equal "123.5", r.report["spawn_at"]
   end
 

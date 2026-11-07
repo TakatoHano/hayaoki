@@ -63,4 +63,31 @@ class HayateCLITest < Minitest::Test
     assert_includes @out.string, "Phases"
     assert_match(/run 1\/1/, @err.string)
   end
+
+  def test_bad_ruby_gives_short_message
+    dir = Dir.mktmpdir("hayate-cli")
+    Minitest.after_run { FileUtils.rm_rf(dir) }
+    File.write(File.join(dir, "ok.rb"), "")
+    assert_equal 1, cli.run(["boot-report", "--ruby", "/nonexistent/ruby", "--entry", "ok.rb", "--runs", "1", dir])
+    assert_match(/--ruby/, @err.string)
+    refute_match(/\.rb:\d+:in/, @err.string)
+  end
+
+  def test_unwritable_output
+    dir = Dir.mktmpdir("hayate-cli")
+    Minitest.after_run { FileUtils.rm_rf(dir) }
+    File.write(File.join(dir, "ok.rb"), "")
+    assert_equal 1, cli.run(["boot-report", "--runs", "1", "--entry", "ok.rb", "--ruby", RbConfig.ruby, "--output", File.join(dir, "no/such/dir/o.txt"), dir])
+    assert_match(/cannot write/, @err.string)
+  end
+
+  def test_production_secret_hint
+    dir = Dir.mktmpdir("hayate-cli")
+    Minitest.after_run { FileUtils.rm_rf(dir) }
+    File.write(File.join(dir, "boom.rb"), "raise 'Missing secret_key_base for production'\n")
+    assert_equal 1, cli.run(["boot-report", "--runs", "1", "--entry", "boom.rb", "--ruby", RbConfig.ruby, dir])
+    assert_includes @err.string, "SECRET_KEY_BASE_DUMMY=1"
+    assert_includes @err.string, "--env"
+    assert_includes @err.string, "external services"
+  end
 end

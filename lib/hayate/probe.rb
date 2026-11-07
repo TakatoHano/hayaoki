@@ -95,7 +95,7 @@ module Hayate::Probe
     ev[i + 4] = t
     ev[i + 5] = res
     ev[i + 7] = Process.clock_gettime(Process::CLOCK_THREAD_CPUTIME_ID) - cpu0 if cpu0
-    @boot_end = t if main && st.empty?
+    @boot_end ||= t if main && st.empty? # 最初に閉じた深さ0 (= entry)。at_exit 内の require で延ばさない
     after_require(res) if kind <= K_RR && res.is_a?(String) && !PENDING.empty?
   end
 
@@ -412,7 +412,6 @@ end
 # require_relative は Kernel に直接定義し直す。元のメソッドは基準パスが壊れるので呼ばず、
 # gem_original_require (無ければ builtin の退避先) に委譲する (§1.4)。
 ::Kernel.module_eval do
-  alias_method :__hayate_require_relative, :require_relative
   alias_method :require_relative, :require_relative
   def require_relative(path)
     loc = caller_locations(1, 1)&.first
@@ -429,7 +428,7 @@ end
     Hayate::Probe.leave(i, 1, ok ? (r && Hayate::Probe.resolve_feature(abs)) : :raised) if i
   end
 
-  private :require, :load, :require_relative, :__hayate_require, :__hayate_load, :__hayate_require_relative
+  private :require, :load, :require_relative, :__hayate_require, :__hayate_load
 end
 ::Kernel.singleton_class.send(:private, :__hayate_require, :__hayate_load)
 

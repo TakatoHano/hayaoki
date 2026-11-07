@@ -68,11 +68,13 @@ module Hayate
               s = r.phases[k]
               next unless s
               label = @conds.size > 1 ? "#{PHASE_LABELS[k]} [#{c}]" : PHASE_LABELS[k]
+              label = "  └ #{label}" if k == "eager_load" # initialize の内側 (足し算しない)
               n = max.positive? ? (med(s) / max * BAR_WIDTH).round : 0
               n = 1 if n.zero? && med(s).to_f.positive?
               out << Kernel.format("  %-22s %-#{BAR_WIDTH}s %s", label, BAR * n, stat_s(s, range: @conds.size == 1))
             end
           end
+          out << "  (└ eager load runs within initialize; do not add them)" if keys.include?("eager_load")
           out << ""
         end
 
@@ -90,7 +92,7 @@ module Hayate
             return
           end
           idx = lists.transform_values { |l| l.to_h { |e| [namer.call(e), e] } }
-          nw = [WIDTH - 2 - 12 * @conds.size - (@conds.size > 1 ? 10 : 22 + (breakdown ? 0 : 0)), 20].max
+          nw = [WIDTH - 2 - 12 * @conds.size - (@conds.size > 1 ? 10 : 22), 20].max
           names.each do |n|
             vals = @conds.map { |c| idx[c][n] && idx[c][n][metric] }
             line = Kernel.format("  %-#{nw}s", trunc(n.to_s, nw))
@@ -134,10 +136,26 @@ module Hayate
           @conds.each do |c|
             o = ov[c]
             next out << "  #{c}: n/a" unless o
-            ratio = o["ratio"] ? Kernel.format(" (x%.3f)", o["ratio"]) : ""
-            out << "  #{c}: baseline #{fmt(o["baseline_ms"])} ms, with probe #{fmt(o["probe_ms"])} ms, diff #{signed(o["diff_ms"])} ms#{ratio}"
+            ratio = o["ratio"] ? Kernel.format(", x%.3f", o["ratio"]) : ""
+            noise = overhead_noise(o)
+            diff = if noise && o["diff_ms"].abs < noise
+                     "diff within noise (±#{fmt(noise)} ms) (#{signed(o["diff_ms"])} ms#{ratio})"
+                   else
+                     "diff #{signed(o["diff_ms"])} ms#{ratio.empty? ? "" : " (#{ratio[2..]})"}"
+                   end
+            out << "  #{c}: baseline #{fmt(o["baseline_ms"])} ms, with probe #{fmt(o["probe_ms"])} ms"
+            out << "    #{diff}"
           end
           out << ""
+        end
+
+        # 基準側と probe 側の run ごとのばらつき (min〜max の半幅) の大きい方。サンプルが 2 件未満なら nil。
+        def overhead_noise(o)
+          halves = %w[baseline_samples_ms probe_samples_ms].filter_map do |k|
+            v = Array(o[k]).compact
+            (v.max - v.min) / 2.0 if v.size >= 2
+          end
+          halves.max
         end
 
         def warnings(out)
