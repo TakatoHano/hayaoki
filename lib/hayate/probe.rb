@@ -232,8 +232,40 @@ module Hayate::Probe
       rescue StandardError
         nil
       end
+      Hayate::Probe.hook_eager_namespaces if name == :eager_load!
       Hayate::Probe.span(Hayate::Probe::K_INIT, name.to_s, meta) { super }
     end
+  end
+
+  # Finisher の eager_load! initializer は Zeitwerk の後で config.eager_load_namespaces.each(&:eager_load!) と
+  # Rails.eager_load! を呼ぶ。TZInfo.eager_load! (zoneinfo を全部読む) のような require を伴わない重い処理が
+  # ここに入るので、namespace ごとに K_EAGER span を作る。meta は元の eager_load! の定義位置 (持ち主の判定用)。
+  module NamespaceEagerLoadHook
+    def eager_load!(...)
+      name = Hayate::Probe.label(self)
+      # ActiveSupport::Autoload#eager_load! や Engine の delegate だと定義位置が共通の場所になるので、
+      # 定数を定義したファイルを優先し、取れなければ元の eager_load! の位置を使う。
+      loc = begin
+        l = (Object.const_source_location(name) if name && !name.empty?)
+        l = method(:eager_load!).super_method&.source_location if l.nil? || l.empty?
+        l && !l.empty? ? "#{l[0]}:#{l[1]}" : nil
+      rescue StandardError, NameError
+        nil
+      end
+      Hayate::Probe.span(Hayate::Probe::K_EAGER, "#{name}.eager_load!", loc) { super }
+    end
+  end
+
+  def self.hook_eager_namespaces
+    list = ::Rails.application.config.eager_load_namespaces.to_a
+    list << ::Rails
+    list.uniq.each do |ns|
+      next unless ns.respond_to?(:eager_load!)
+      sc = ns.singleton_class
+      sc.prepend(NamespaceEagerLoadHook) unless sc.include?(NamespaceEagerLoadHook)
+    end
+  rescue Exception => e # 計測の失敗で boot を止めない
+    @errors << "eager_load_namespaces: #{e.class}: #{e.message}"[0, 500]
   end
 
   module LoadHooksHook

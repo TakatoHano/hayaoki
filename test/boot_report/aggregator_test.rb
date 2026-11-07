@@ -78,6 +78,24 @@ class BootReportAggregatorTest < Minitest::Test
     assert_equal %w[app foo], r.gems.first(2).map { _1["name"] }, "self time の降順"
   end
 
+  def test_namespace_eager_load_self_time_goes_to_defining_gem
+    pl = payload([
+      [0, "./config/environment", nil, 0, 1000, "/app/config/environment.rb"],
+      [7, "initialize", 0, 100, 900, nil],
+      [3, "eager_load!", 1, 200, 800, ["Rails::Application", "/gems/foo-1.0/lib/foo/railtie.rb:1"]],
+      [6, "main", 2, 210, 300, nil],                                       # Zeitwerk (帰属しない)
+      [6, "Foo.eager_load!", 2, 300, 700, "/gems/foo-1.0/lib/foo.rb:9"],   # namespace
+      [0, "foo/zone", 4, 320, 420, "/gems/foo-1.0/lib/foo/zone.rb"],
+    ])
+    r = agg([pl])
+    foo = gem_row(r, "foo")
+    assert_in_delta 0.300, foo["eager_ms"]["median"], 1e-6, "400 - 100 (require 子)"
+    assert_in_delta 0.100, foo["require_ms"]["median"], 1e-6
+    assert_in_delta 0.490, r.phases["eager_load"]["median"], 1e-6, "Zeitwerk 90 + namespace 400"
+    init = r.initializers.find { _1["name"] == "eager_load!" }
+    assert_in_delta 0.110, init["init_body_ms"]["median"], 1e-6
+  end
+
   def test_unattributed_category_is_boot_minus_attributed
     r = agg([run_payload])
     attributed = r.categories.reject { |k, _| k == "unattributed" }.sum { |_, v| v["self_ms"]["median"] }

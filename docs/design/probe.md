@@ -110,9 +110,12 @@ end
 | H7 | `ActiveSupport::LazyLoadHooks#execute_hook` | prepend | `active_support/lazy_load_hooks.rb` の読み込み直後 | on_load（`K_ONLOAD`） | フック名、`block.source_location` |
 | H8 | `ActiveSupport::LazyLoadHooks#run_load_hooks` | prepend | H7 と同時 | load_hooks（`K_HOOKS`） | フック名、base のクラス名 |
 | H9 | `Zeitwerk::Loader#eager_load` | prepend | `zeitwerk/loader.rb` の読み込み直後 | eager_load | `tag` |
+| H9b | `config.eager_load_namespaces` の各要素と `Rails` の `eager_load!` | 特異クラスに prepend | H6 で `eager_load!` initializer を実行する直前 | eager_load（`<名前>.eager_load!`） | 定数の定義元（`Object.const_source_location`）、取れなければ元の `eager_load!` の位置 |
 | H10 | `Kernel#exit!` / `Process.exit!` | alias chain | probe 読み込み時（任意。§5.3） | - | 書き出してから委譲 |
 
 補足:
+
+- H9b について: Finisher の `eager_load!` initializer は Zeitwerk の後で `config.eager_load_namespaces.each(&:eager_load!)` と `Rails.eager_load!` を呼ぶ。`TZInfo.eager_load!`（zoneinfo を全部読む。macOS で約 115ms）のように require を伴わない処理があり、H9 だけでは initializer 本体の時間に埋もれていた。`ActiveSupport::Autoload#eager_load!` や Engine の delegate では定義位置が共通の場所になるため、持ち主の判定には定数の定義元を優先する。
 
 - H4〜H9 は Kernel ではないので prepend で問題ない。後からこれらのメソッドを alias chain するライブラリは見つかっていない。万一あっても、複製された prepend 本体の `super` が失敗するのはそのライブラリの経路だけである。リスクとして §9 に記載する。
 - H7 について: `ActiveSupport` には `LazyLoadHooks` が extend 済みだが、Ruby 3.0 以降は後から prepend しても反映される（プロトタイプで on_load span が 40 件取れた）。

@@ -75,7 +75,7 @@ module Hayate
         a = {
           merged: merged, features: payload["features"], background_spans: spans.size - main.size,
           false_count: payload.dig("false_require", "count").to_i, false_ms: payload.dig("false_require", "time_us").to_i / 1000.0,
-          gems: Hash.new { |h, k| h[k] = { "self_ms" => 0.0, "require_ms" => 0.0, "on_load_ms" => 0.0, "initializer_count" => 0, "category" => nil } },
+          gems: Hash.new { |h, k| h[k] = { "self_ms" => 0.0, "require_ms" => 0.0, "on_load_ms" => 0.0, "eager_ms" => 0.0, "initializer_count" => 0, "category" => nil } },
           categories: Hash.new { |h, k| h[k] = { "self_ms" => 0.0 } },
           files: Hash.new { |h, k| h[k] = { "self_ms" => 0.0, "inclusive_ms" => 0.0, "owner" => nil, "category" => nil, "count" => 0 } },
           initializers: Hash.new { |h, k| h[k] = { "inclusive_ms" => 0.0, "init_body_ms" => 0.0 } },
@@ -125,6 +125,8 @@ module Hayate
             key = s.name
             a[:phase][key] = a[:phase][key].to_f + dur_ms if %w[bundler_require initialize].include?(key)
           when K_EAGER
+            # eager_load_namespaces の span (meta = 定義位置) は自己時間を持ち主に付ける。Zeitwerk の span は従来どおり。
+            add_owner(a, o, self_ms, "eager_ms") if s.res.is_a?(String)
             a[:phase]["eager_load"] = a[:phase]["eager_load"].to_f + dur_ms unless eager_ancestor?(s, pmap)
           end
         end
@@ -274,6 +276,8 @@ module Hayate
         when K_ONLOAD
           loc = s.res.is_a?(String) ? s.res.sub(/:\d+\z/, "") : nil
           loc ? resolver.owner(loc) : Owner.new("other", "other")
+        when K_EAGER
+          s.res.is_a?(String) ? resolver.owner(s.res.sub(/:\d+\z/, "")) : Owner.new("other", "other")
         when K_INIT
           loc = s.res.is_a?(Array) && s.res[1].is_a?(String) ? s.res[1].sub(/:\d+\z/, "") : nil
           loc ? resolver.owner(loc) : Owner.new("other", "other")

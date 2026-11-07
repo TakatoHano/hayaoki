@@ -36,7 +36,7 @@ module Hayate
           header(out)
           phases(out)
           categories(out)
-          ranked(out, "Top gems (self time)", :gems, ->(r) { r.gems }, ->(e) { e["name"] }, "self_ms", breakdown: { "req" => "require_ms", "onload" => "on_load_ms" })
+          ranked(out, "Top gems (self time)", :gems, ->(r) { r.gems }, ->(e) { e["name"] }, "self_ms", breakdown: { "req" => "require_ms", "onload" => "on_load_ms", "eager" => "eager_ms" })
           ranked(out, "Top initializers (inclusive)", :inits, ->(r) { r.initializers }, ->(e) { [e["name"], e["context"]].compact.join(" ") }, "inclusive_ms",
                  breakdown: { "init body (own time, not blamed on gem)" => "init_body_ms" })
           ranked(out, "Top on_load hooks (inclusive)", :on_loads, ->(r) { r.on_loads }, ->(e) { [e["name"], e["source"]].compact.join(" ") }, "inclusive_ms")

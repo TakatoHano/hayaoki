@@ -54,6 +54,13 @@ class ProbeRailsTest < Minitest::Test
     assert(inits.any? { |s| s.name == "load_config_initializers" })
     assert(inits.any? { |s| s.name.include?("eager_load!") })
     assert_operator rep.of_kind(ProbeReport::K_EAGER).size, :>=, 1, "Zeitwerk eager_load span"
+    tz = rep.named(ProbeReport::K_EAGER, "TZInfo.eager_load!")
+    assert_equal 1, tz.size, "eager_load_namespaces の span"
+    assert_match(%r{/tzinfo[^/]*/lib/tzinfo\.rb:\d+\z}, tz.first.res)
+    # Rails は eager_load_namespaces にも入っているので Rails.eager_load! は 2 回呼ばれる (2 回目は何もしない)
+    assert_operator rep.named(ProbeReport::K_EAGER, "Rails.eager_load!").size, :>=, 1
+    ad = rep.named(ProbeReport::K_EAGER, "ActionDispatch.eager_load!").first
+    assert_match(%r{/actionpack[^/]*/lib/}, ad.res, "Autoload 共通の定義位置ではなく定数の定義元")
     assert_equal 1, rep.named(ProbeReport::K_PHASE, "initialize").size
     assert_equal 1, rep.named(ProbeReport::K_PHASE, "bundler_require").size
     assert_operator rep.of_kind(ProbeReport::K_ONLOAD).size, :>, 5, "on_load spans"
