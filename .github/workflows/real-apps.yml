@@ -1,0 +1,66 @@
+name: Real app validation
+
+# 実アプリ (公式 Docker イメージ) の中で hayate boot-report を動かす。手動実行のみ。
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: measured runs per condition
+        default: "5"
+
+permissions:
+  contents: read
+
+jobs:
+  boot-report:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: redmine
+            image: redmine:7.0
+            dir: /usr/src/redmine
+            # sqlite の database.yml を置いて migrate してから測る (initializer が DB を読む場合に備える)
+            prep: >-
+              printf 'production:\n  adapter: sqlite3\n  database: db/production.sqlite3\n' > config/database.yml &&
+              bundle exec rake db:migrate >/tmp/migrate.log 2>&1 || (tail -20 /tmp/migrate.log; exit 1)
+            env: >-
+              -e RAILS_ENV=production -e SECRET_KEY_BASE=dummy-secret-key-base-for-measurement-only-0123456789
+          - app: mastodon
+            image: ghcr.io/mastodon/mastodon:v4.7.5
+            dir: /opt/mastodon
+            prep: "true"
+            env: >-
+              -e RAILS_ENV=production -e LOCAL_DOMAIN=example.com
+              -e SECRET_KEY_BASE=dummy-secret-key-base-for-measurement-only-0123456789
+              -e OTP_SECRET=dummy-otp-secret-for-measurement-only-0123456789
+              -e ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY=dummydeterministickey0123456789ab
+              -e ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT=dummykeyderivationsalt0123456789a
+              -e ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY=dummyprimarykey0123456789abcdefgh
+    name: ${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pull image
+        run: docker pull -q ${{ matrix.image }}
+      - name: boot-report
+        run: |
+          mkdir -p out && chmod 777 out
+          docker run --rm --entrypoint bash -u 0 ${{ matrix.env }} \
+            -v "$PWD:/hayate:ro" -v "$PWD/out:/out" -w ${{ matrix.dir }} ${{ matrix.image }} -c '
+              set -e
+              ${{ matrix.prep }}
+              ruby -v; bundle -v
+              ruby -I/hayate/lib /hayate/exe/hayate boot-report --runs ${{ inputs.runs }} --bootsnap both --redact \
+                --format json --output /out/report.json .
+              ruby -I/hayate/lib /hayate/exe/hayate boot-report --runs ${{ inputs.runs }} --redact . > /out/report.txt
+            '
+      - name: Summary
+        if: always()
+        run: |
+          { echo "## ${{ matrix.app }} (${{ matrix.image }})"; echo '```'; cat out/report.txt 2>/dev/null || echo "(no report)"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: boot-report-${{ matrix.app }}
+          path: out/
