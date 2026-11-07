@@ -4,7 +4,7 @@ module Hayate
   module BootReport
     # 集計結果。to_h は JSON.generate に渡せる値 (String キーの Hash / Array / 数値 / nil) だけで作る。
     class Report
-      ATTRS = %i[condition runs failed phases categories gems files initializers app_initializer_times on_loads false_require threads
+      ATTRS = %i[condition runs failed phases categories gems files initializers app_initializer_times on_loads eager_namespaces false_require threads
                  ruby features meta warnings].freeze
       attr_reader(*ATTRS)
 

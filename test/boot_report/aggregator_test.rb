@@ -94,6 +94,10 @@ class BootReportAggregatorTest < Minitest::Test
     assert_in_delta 0.490, r.phases["eager_load"]["median"], 1e-6, "Zeitwerk 90 + namespace 400"
     init = r.initializers.find { _1["name"] == "eager_load!" }
     assert_in_delta 0.110, init["init_body_ms"]["median"], 1e-6
+    ns = r.eager_namespaces
+    assert_equal ["Foo.eager_load!"], ns.map { _1["name"] }, "Zeitwerk の span は入らない"
+    assert_in_delta 0.400, ns.first["inclusive_ms"]["median"], 1e-6
+    assert_equal "foo", ns.first["owner"]
   end
 
   def test_unattributed_category_is_boot_minus_attributed

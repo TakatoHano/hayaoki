@@ -40,6 +40,9 @@ module Hayate
           ranked(out, "Top initializers (inclusive)", :inits, ->(r) { r.initializers }, ->(e) { [e["name"], e["context"]].compact.join(" ") }, "inclusive_ms",
                  breakdown: { "init body (own time, not blamed on gem)" => "init_body_ms" })
           ranked(out, "Top on_load hooks (inclusive)", :on_loads, ->(r) { r.on_loads }, ->(e) { [e["name"], e["source"]].compact.join(" ") }, "inclusive_ms")
+          if @reports.values.any? { |r| Array(r.eager_namespaces).any? }
+            ranked(out, "Top eager_load namespaces (inclusive)", :eager_namespaces, ->(r) { r.eager_namespaces }, ->(e) { e["name"] }, "inclusive_ms")
+          end
           false_requires(out)
           overhead(out)
           warnings(out)

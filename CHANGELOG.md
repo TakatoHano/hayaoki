@@ -7,6 +7,8 @@
 - `config.eager_load_namespaces` entries (e.g. `TZInfo.eager_load!`) are recorded as eager_load spans and attributed to the gem that defines them, instead of disappearing into the `eager_load!` initializer body.
 - Phase breakdown (vm boot, bundler require, initialize) and per-gem and per-initializer rankings.
 - Improvement suggestions, printed as candidates: bootsnap effectiveness, heavy app initializers, unused heavy gems, dev gems in production, and eager load trade-offs. Disable with `--no-suggestions`.
+- `tzinfo_eager_load` suggestion: `TZInfo.eager_load!` takes 200–330 ms in Linux containers (see `bench/tzinfo_eager_load.rb`), and it can be made lazy with one line.
+- A ranking of `config.eager_load_namespaces` entries in the text output, and `eager_namespaces` in the JSON output.
 - Options for runs, environment, bootsnap mode (`warm`, `cold`, `both`), entry file, timeout, output file, and rows per ranking, plus thresholds for suggestions.
 - The probe has no runtime dependencies and writes JSON with its own encoder.
 - `--redact` replaces absolute paths in the output (text, JSON, and speedscope): the app directory with `<app>`, gem paths (including bundler git gems) with `<gem:name>/`, and the home directory with `~`.

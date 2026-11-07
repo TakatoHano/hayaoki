@@ -52,6 +52,7 @@ module Hayate
           initializers: initializers(analyses),
           app_initializer_times: app_initializer_times(analyses),
           on_loads: on_loads(analyses),
+          eager_namespaces: eager_namespaces(analyses),
           false_require: {
             "count" => stat(analyses.map { |a| a[:false_count] }), "time_ms" => stat(analyses.map { |a| a[:false_ms] })
           },
@@ -80,6 +81,7 @@ module Hayate
           files: Hash.new { |h, k| h[k] = { "self_ms" => 0.0, "inclusive_ms" => 0.0, "owner" => nil, "category" => nil, "count" => 0 } },
           initializers: Hash.new { |h, k| h[k] = { "inclusive_ms" => 0.0, "init_body_ms" => 0.0 } },
           on_loads: Hash.new { |h, k| h[k] = { "inclusive_ms" => 0.0, "self_ms" => 0.0 } },
+          eager_namespaces: Hash.new { |h, k| h[k] = { "inclusive_ms" => 0.0, "self_ms" => 0.0 } },
           phase: {}
         }
         spawn_at = payload["spawn_at"]&.to_f
@@ -126,7 +128,14 @@ module Hayate
             a[:phase][key] = a[:phase][key].to_f + dur_ms if %w[bundler_require initialize].include?(key)
           when K_EAGER
             # eager_load_namespaces の span (meta = 定義位置) は自己時間を持ち主に付ける。Zeitwerk の span は従来どおり。
-            add_owner(a, o, self_ms, "eager_ms") if s.res.is_a?(String)
+            if s.res.is_a?(String)
+              add_owner(a, o, self_ms, "eager_ms")
+              e = a[:eager_namespaces][s.name]
+              e["inclusive_ms"] += dur_ms
+              e["self_ms"] += self_ms
+              e["owner"] = o.name
+              e["category"] = o.category
+            end
             a[:phase]["eager_load"] = a[:phase]["eager_load"].to_f + dur_ms unless eager_ancestor?(s, pmap)
           end
         end
@@ -207,6 +216,12 @@ module Hayate
         merged.sort_by { |k, v| [-v["inclusive_ms"]["median"], k.to_s] }.first(@top_on_loads).map do |(name, loc), v|
           { "name" => name, "source" => loc }.merge(v)
         end
+      end
+
+      # config.eager_load_namespaces の eager_load! (TZInfo.eager_load! など)。件数は数十なので切り詰めない。
+      def eager_namespaces(analyses)
+        merged = merge_runs(analyses.map { |a| a[:eager_namespaces].to_h })
+        merged.sort_by { |k, v| [-v["inclusive_ms"]["median"], k.to_s] }.map { |name, v| { "name" => name }.merge(v) }
       end
 
       def add_owner(a, owner, self_ms, kind_key)

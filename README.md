@@ -48,6 +48,32 @@ Phases (median)
   initialize             ███████████                  267.0 ms
 ```
 
+## Suggestions
+
+| Rule | Confidence | What it looks for |
+| --- | --- | --- |
+| `dev_gems_in_production` | high / medium / low | development or test gems loaded in production (high: direct and not in a group; low: transitive) |
+| `bootsnap_ineffective` | high | bootsnap missing, or its cache not helping |
+| `heavy_app_initializer` | medium | app initializers slower than `--initializer-threshold` |
+| `tzinfo_eager_load` | medium | `TZInfo.eager_load!` loading every time zone at boot (see below) |
+| `unused_heavy_gem` | low | heavy gems with no references in app code (candidates for `require: false`) |
+| `eager_load_tradeoff` | info | eager loading taking a large share of boot |
+
+Estimated savings are upper bounds. Findings can overlap, and the output marks which ones do, so do not add them up.
+
+### TZInfo eager loading
+
+In production, Rails adds `TZInfo` to `config.eager_load_namespaces`, and `TZInfo.eager_load!` reads all ~600 time zones at boot. Measured with [`bench/tzinfo_eager_load.rb`](https://github.com/TakatoHano/hayate/blob/main/bench/tzinfo_eager_load.rb) (median of 7 fresh processes on a GitHub-hosted runner, Ruby 3.4):
+
+| Environment | `TZInfo.eager_load!` |
+| --- | --- |
+| `ruby:3.4-slim`, system zoneinfo / with `tzinfo-data` | 243 ms / 194 ms |
+| `ruby:3.4-alpine` + `tzdata` / with `tzinfo-data` | 330 ms / 228 ms |
+| AWS Lambda `ruby:3.4`, system zoneinfo / with `tzinfo-data` | 319 ms / 202 ms |
+| macOS (Apple silicon, local) | 112 ms |
+
+Removing it (`Rails.application.config.eager_load_namespaces.delete(TZInfo)` in an initializer) leaves 5–15 ms at boot. Each zone is then loaded on first use, in under 1 ms. The trade-off is that forking servers no longer share the zone data copy-on-write.
+
 ## How it works
 
 hayate runs your application in a child process with a probe injected through `ruby -r`. The probe hooks the require family of methods with an alias chain, not `prepend`, so it coexists with bootsnap, Zeitwerk, and bundled_gems. Rails-specific hooks (initializers, on_load hooks, eager loading, `Bundler.require`, and `initialize!`) are installed lazily, when the corresponding file is loaded. The measured overhead is about 2%.
@@ -60,7 +86,7 @@ The design is described in [docs/design/probe.md](https://github.com/TakatoHano/
 - Suggestions are candidates. Verify each one before applying it.
 - Output contains absolute paths unless you pass `--redact`. `--redact` rewrites paths only. It does not remove other content, so review the output before sharing it.
 - JSON output does not include the stderr of failed runs, because it may contain secrets. It keeps the error message, exit status, and error class. When every run fails, hayate prints the stderr tail to the terminal.
-- The category table (`gem`, `app`, `stdlib`, `other`, `init_body`, `unattributed`) sums to boot time. `init_body` is the own time of initializer blocks (not blamed on the gem that defines them). `unattributed` is boot time minus the self time attributed to files, initializer bodies, and on_load hooks. It covers time in `run_load_hooks` itself, the self time of phase and eager load spans, and time outside any span. Background-thread spans are excluded.
+- The category table (`gem`, `app`, `stdlib`, `other`, `init_body`, `unattributed`) sums to boot time. `init_body` is the own time of initializer blocks (not blamed on the gem that defines them). `unattributed` is boot time minus the self time attributed to files, initializer bodies, and on_load hooks. It covers time in `run_load_hooks` itself, the self time of phase and Zeitwerk eager load spans, and time outside any span. Background-thread spans are excluded.
 
 ## Requirements
 

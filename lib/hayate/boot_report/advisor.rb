@@ -32,8 +32,9 @@ module Hayate
         require_relative "rules/heavy_app_initializer"
         require_relative "rules/unused_heavy_gem"
         require_relative "rules/eager_load_tradeoff"
+        require_relative "rules/tzinfo_eager_load"
         [Rules::DevGemsInProduction, Rules::BootsnapIneffective, Rules::HeavyAppInitializer,
-         Rules::UnusedHeavyGem, Rules::EagerLoadTradeoff]
+         Rules::UnusedHeavyGem, Rules::EagerLoadTradeoff, Rules::TzinfoEagerLoad]
       end
 
       def initialize(report, app_dir:, result: nil, initializer_threshold_ms: DEFAULT_INITIALIZER_THRESHOLD_MS,
@@ -68,6 +69,7 @@ module Hayate
       # id を振り、節約見込みが重なりうる finding を overlaps に載せる。
       #  - 同じ gem を別ルールが指している
       #  - app initializer の inclusive 時間には gem の require が含まれうるので、gem 系の finding と重なる
+      #  - TZInfo.eager_load! の時間は eager_load フェーズに含まれる
       def mark_overlaps(list)
         seen = Hash.new(0)
         list.each do |s|
@@ -79,7 +81,7 @@ module Hayate
         list.each do |s|
           s.overlaps = list.filter_map do |o|
             next if o.equal?(s)
-            o.id if (gems[s] & gems[o]).any? || initializer_vs_gem?(s, o)
+            o.id if (gems[s] & gems[o]).any? || initializer_vs_gem?(s, o) || [s.rule, o.rule].sort == %i[eager_load_tradeoff tzinfo_eager_load]
           end
         end
         list
