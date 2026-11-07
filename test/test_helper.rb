@@ -68,3 +68,16 @@ module ProbeHelper
     end
   end
 end
+
+# fixture の Rails アプリを tmp に複製し、古い Gemfile.lock を消してから、ローカルの gem だけで lock を作り直す。
+# [app_dir, lock_error(失敗時の出力。成功なら nil)] を返す。tmp は終了時に消す。
+def prepare_rails_min_app(prefix = "hayate-app")
+  tmp = Dir.mktmpdir(prefix)
+  Minitest.after_run { FileUtils.rm_rf(tmp) }
+  FileUtils.cp_r(File.join(FIXTURES, "apps/rails_min"), tmp)
+  dir = File.realpath(File.join(tmp, "rails_min"))
+  FileUtils.rm_f(File.join(dir, "Gemfile.lock"))
+  # --local では gem の checksum を取れず、Bundler 4 は空の CHECKSUMS を frozen で拒否するので、checksums なしで作る
+  so, st = Open3.capture2e(CLEAN_ENV.merge("BUNDLE_LOCKFILE_CHECKSUMS" => "false"), RbConfig.ruby, "-S", "bundle", "lock", "--local", chdir: dir)
+  [dir, st.success? ? nil : so]
+end

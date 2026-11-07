@@ -6,7 +6,6 @@ require "test_helper"
 class ProbeRailsTest < Minitest::Test
   include ProbeHelper
 
-  APP_SRC = File.join(FIXTURES, "apps/rails_min")
   RAILS_ENV_VARS = { "RAILS_ENV" => "production", "DISABLE_SPRING" => "1" }.freeze
 
   class << self
@@ -23,13 +22,8 @@ class ProbeRailsTest < Minitest::Test
     # fixture アプリを tmp に複製し、ローカルの gem だけで Gemfile.lock を作る (1 回だけ)
     def prepare_app
       return @app_dir if @app_dir
-      @tmp = Dir.mktmpdir("hayate-rails")
-      Minitest.after_run { FileUtils.rm_rf(@tmp) }
-      FileUtils.cp_r(APP_SRC, @tmp)
-      dir = File.realpath(File.join(@tmp, "rails_min"))
-      so, st = Open3.capture2e(CLEAN_ENV, RbConfig.ruby, "-S", "bundle", "lock", "--local", chdir: dir)
-      @lock_error = st.success? ? nil : so
-      @app_dir = dir
+      @app_dir, @lock_error = prepare_rails_min_app("hayate-rails")
+      @app_dir
     end
 
     attr_reader :lock_error

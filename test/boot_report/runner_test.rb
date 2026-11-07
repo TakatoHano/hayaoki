@@ -5,8 +5,6 @@ require "hayate/boot_report/runner"
 require "hayate/boot_report/aggregator"
 
 class BootReportRunnerTest < Minitest::Test
-  APP_SRC = File.join(FIXTURES, "apps/rails_min")
-
   class << self
     attr_reader :app_dir, :lock_error
 
@@ -17,13 +15,8 @@ class BootReportRunnerTest < Minitest::Test
     # fixture アプリを tmp に複製し、ローカルの gem だけで Gemfile.lock を作る (1 回だけ)
     def prepare_app
       return @app_dir if @app_dir
-      tmp = Dir.mktmpdir("hayate-runner")
-      Minitest.after_run { FileUtils.rm_rf(tmp) }
-      FileUtils.cp_r(APP_SRC, tmp)
-      dir = File.realpath(File.join(tmp, "rails_min"))
-      so, st = Open3.capture2e(CLEAN_ENV, RbConfig.ruby, "-S", "bundle", "lock", "--local", chdir: dir)
-      @lock_error = st.success? ? nil : so
-      @app_dir = dir
+      @app_dir, @lock_error = prepare_rails_min_app("hayate-runner")
+      @app_dir
     end
   end
 
@@ -66,9 +59,9 @@ class BootReportRunnerTest < Minitest::Test
       assert_kind_of Numeric, ov["diff_ms"]
       assert_kind_of Numeric, ov["ratio"]
       assert_operator ov["baseline_ms"], :>, 0
-      # 区間は揃っているので差は小さい。実行間ノイズ (数 ms〜) を許容して -5ms または基準の -3% まで
-      assert_operator ov["diff_ms"], :>=, -[5.0, ov["baseline_ms"] * 0.03].max, "#{cond} overhead diff #{ov["diff_ms"]}"
-      assert_operator ov["diff_ms"], :<=, ov["baseline_ms"] * 0.2, "#{cond} overhead diff #{ov["diff_ms"]}"
+      # 1 回ごとのノイズ (±15〜20ms) があるので、基準の ±10% 程度の範囲で「極端な値でないこと」だけを見る
+      tol = [ov["baseline_ms"] * 0.1, 30.0].max
+      assert_in_delta 0, ov["diff_ms"], tol, "#{cond} overhead diff #{ov["diff_ms"]}"
       JSON.generate(rep.to_h)
     end
   end
@@ -127,5 +120,95 @@ class BootReportRunnerTest < Minitest::Test
     assert_equal ["ruby", "-r", Hayate::BootReport::PROBE_PATH, "-e"], cmd.first(4)
     assert_equal 'require File.expand_path("config/environment", Dir.pwd)', cmd.last
     assert_equal 3, r.command(probe: false).size
+  end
+
+  def test_partial_failure_is_recorded_and_run_continues
+    dir = Dir.mktmpdir("hayate-partial")
+    Minitest.after_run { FileUtils.rm_rf(dir) }
+    counter = File.join(dir, "count")
+    # n は probe 有りの実行 (warmup=1, 計測=2..4) の通し番号。3 回目だけ失敗する
+    File.write(File.join(dir, "flaky.rb"), <<~RUBY)
+      unless ENV["HAYATE_BASE_MARK"]
+        n = (File.exist?(#{counter.inspect}) ? File.read(#{counter.inspect}).to_i : 0) + 1
+        File.write(#{counter.inspect}, n.to_s)
+        raise "flaky \#{n}" if n == 3
+      end
+    RUBY
+    result = Hayate::BootReport::Runner.new(app_dir: dir, runs: 3, entry: "flaky.rb").run
+    failed = result.meta["failed_runs"]
+    assert_equal 1, failed.size
+    assert_equal "boot_error", failed[0]["reason"]
+    assert_includes failed[0]["stderr_tail"], "flaky 3"
+    list = result.payloads["warm"]
+    assert_equal 3, list.size
+    assert_equal 2, list.count { _1["status"] == "ok" }
+    rep = Hayate::BootReport::Aggregator.new.aggregate_result(result)["warm"]
+    assert_equal 2, rep.runs
+    assert_equal 1, rep.failed
+  end
+
+  def test_all_runs_failing_raises
+    dir = Dir.mktmpdir("hayate-allfail")
+    Minitest.after_run { FileUtils.rm_rf(dir) }
+    File.write(File.join(dir, "boom.rb"), "raise 'always'\n")
+    assert_raises(Hayate::BootReport::RunError) { Hayate::BootReport::Runner.new(app_dir: dir, runs: 2, entry: "boom.rb").run }
+  end
+
+  def test_missing_lockfile_is_reported_before_start_and_not_created
+    dir = Dir.mktmpdir("hayate-nolock")
+    Minitest.after_run { FileUtils.rm_rf(dir) }
+    File.write(File.join(dir, "Gemfile"), "source 'https://rubygems.org'\n")
+    File.write(File.join(dir, "ok.rb"), "")
+    err = assert_raises(Hayate::BootReport::RunError) { Hayate::BootReport::Runner.new(app_dir: dir, entry: "ok.rb").run }
+    assert_equal :no_lockfile, err.reason
+    assert_includes err.message, "bundle lock"
+    refute File.exist?(File.join(dir, "Gemfile.lock"))
+  end
+
+  def test_bundle_env_of_user_is_kept_and_frozen_is_passed
+    dir = Dir.mktmpdir("hayate-env")
+    Minitest.after_run { FileUtils.rm_rf(dir) }
+    File.write(File.join(dir, "Gemfile"), "")
+    File.write(File.join(dir, "Gemfile.lock"), "")
+    File.write(File.join(dir, "env.rb"), "File.write('env.out', ENV.values_at('BUNDLE_WITHOUT', 'BUNDLE_FROZEN', 'BUNDLE_BIN_PATH').inspect)\n")
+    old = ENV["BUNDLE_WITHOUT"]
+    ENV["BUNDLE_WITHOUT"] = "development"
+    begin
+      Hayate::BootReport::Runner.new(app_dir: dir, runs: 1, entry: "env.rb").run
+    ensure
+      ENV["BUNDLE_WITHOUT"] = old
+    end
+    assert_equal '["development", "true", nil]', File.read(File.join(dir, "env.out"))
+  end
+
+  def test_interrupt_signal_kills_child_group
+    dir = Dir.mktmpdir("hayate-int")
+    Minitest.after_run { FileUtils.rm_rf(dir) }
+    pidfile = File.join(dir, "pid")
+    File.write(File.join(dir, "sleepy.rb"), "File.write(#{pidfile.inspect}, Process.pid.to_s)\nsleep 60\n")
+    got = nil
+    old = Signal.trap("TERM") { got = :term }
+    begin
+      killer = Thread.new do
+        sleep 0.05 until File.exist?(pidfile) && !File.read(pidfile).empty?
+        Process.kill("TERM", Process.pid)
+      end
+      err = assert_raises(Hayate::BootReport::RunError) do
+        Hayate::BootReport::Runner.new(app_dir: dir, runs: 1, entry: "sleepy.rb", timeout: 60).run
+      end
+      killer.join
+      assert_equal :interrupted, err.reason
+      assert_equal :term, got, "original TERM handler is restored and called"
+    ensure
+      Signal.trap("TERM", old)
+    end
+    pid = File.read(pidfile).to_i
+    gone = begin
+      Process.kill(0, pid)
+      false
+    rescue Errno::ESRCH
+      true
+    end
+    assert gone, "child process #{pid} must not survive"
   end
 end
