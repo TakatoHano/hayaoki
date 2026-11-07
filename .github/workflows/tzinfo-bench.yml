@@ -1,0 +1,35 @@
+name: TZInfo eager load bench
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Header
+        run: |
+          {
+            echo "| environment | ruby | data source | eager_load! ms | boot (lazy) ms | first other zone ms |"
+            echo "|---|---|---|---|---|---|"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Measure
+        run: |
+          set -euo pipefail
+          run() { # label image data(zoneinfo|ruby) prep
+            local label="$1" image="$2" data="$3" prep="$4"
+            local gems="tzinfo"; [ "$data" = ruby ] && gems="tzinfo tzinfo-data"
+            docker run --rm --entrypoint sh -e HAYATE_TZ_DATA="$data" -v "$PWD/bench:/bench:ro" "$image" -c \
+              "$prep gem install --no-document $gems >/dev/null 2>&1 && ruby /bench/tzinfo_eager_load.rb '$label' 7" \
+              | tee -a "$GITHUB_STEP_SUMMARY" || echo "| $label | - | failed | - | - | - |" | tee -a "$GITHUB_STEP_SUMMARY"
+          }
+          run "ruby:3.4-slim (zoneinfo)"            ruby:3.4-slim zoneinfo ""
+          run "ruby:3.4-slim + tzinfo-data"         ruby:3.4-slim ruby ""
+          run "ruby:3.4-alpine (zoneinfo, +tzdata)" ruby:3.4-alpine zoneinfo "apk add --no-cache tzdata >/dev/null &&"
+          run "ruby:3.4-alpine + tzinfo-data"       ruby:3.4-alpine ruby ""
+          run "lambda ruby3.4 (zoneinfo)"           public.ecr.aws/lambda/ruby:3.4 zoneinfo ""
+          run "lambda ruby3.4 + tzinfo-data"        public.ecr.aws/lambda/ruby:3.4 ruby ""
