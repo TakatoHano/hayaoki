@@ -78,6 +78,27 @@ class BootReportAggregatorTest < Minitest::Test
     assert_equal %w[app foo], r.gems.first(2).map { _1["name"] }, "self time の降順"
   end
 
+  def test_unattributed_category_is_boot_minus_attributed
+    r = agg([run_payload])
+    attributed = r.categories.reject { |k, _| k == "unattributed" }.sum { |_, v| v["self_ms"]["median"] }
+    assert_in_delta 1.0 - attributed, r.categories["unattributed"]["self_ms"]["median"], 1e-6
+    assert_operator r.categories["unattributed"]["self_ms"]["median"], :>, 0
+    assert_in_delta 0.050, r.categories["init_body"]["self_ms"]["median"], 1e-6
+  end
+
+  def test_app_that_is_itself_a_gem_is_categorized_as_app
+    p = payload([
+      [0, "./config/environment", nil, 0, 1000, "/app/config/environment.rb"],
+      [0, "mylib", 0, 100, 300, "/app/lib/mylib.rb"],
+      [0, "dep", 0, 400, 500, "/app/vendor/dep/lib/dep.rb"],
+    ], "specs" => { "myapp" => ["0.1", "/app", nil], "dep" => ["1.0", "/app/vendor/dep", nil] })
+    r = agg([p])
+    assert_equal "app", gem_row(r, "app")["category"]
+    assert_in_delta 0.9, gem_row(r, "app")["self_ms"]["median"], 1e-6
+    assert_nil gem_row(r, "myapp")
+    assert_equal "gem", gem_row(r, "dep")["category"]
+  end
+
   def test_files_use_self_time_and_merge_double_recording
     r = agg([run_payload])
     foo_rb = r.files.select { _1["path"] == "/gems/foo-1.0/lib/foo.rb" }

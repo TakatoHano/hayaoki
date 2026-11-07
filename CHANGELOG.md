@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.0] - 2026-11-08
 
 - `hayate boot-report` measures boot time over several runs and reports the median and range, in text, JSON, or speedscope format.
 - The probe, injected with `ruby -r`, records require, require_relative, load, initializer, on_load, eager_load, `Bundler.require`, and `initialize!` as spans.
@@ -8,3 +8,7 @@
 - Improvement suggestions, printed as candidates: bootsnap effectiveness, heavy app initializers, unused heavy gems, dev gems in production, and eager load trade-offs. Disable with `--no-suggestions`.
 - Options for runs, environment, bootsnap mode (`warm`, `cold`, `both`), entry file, timeout, output file, and rows per ranking, plus thresholds for suggestions.
 - The probe has no runtime dependencies and writes JSON with its own encoder.
+- `--redact` replaces absolute paths in the output (text, JSON, and speedscope): the app directory with `<app>`, gem paths (including bundler git gems) with `<gem:name>/`, and the home directory with `~`.
+- A category table in the text and JSON output, with an `unattributed` row (boot time minus attributed self time) so the totals add up.
+- Applications that are themselves gems (`gemspec`, engine dummy apps, `path: "."`) are categorized as `app` for files under `app`, `config`, `lib`, and `db`.
+- JSON output omits the stderr of failed runs, which may contain secrets. It keeps the message, exit status, and error class.

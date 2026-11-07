@@ -66,19 +66,43 @@ module Hayate
                          estimated_savings_ms: savings && savings.round(1), action: action)
         end
 
+        # Gemfile のパス。BUNDLE_GEMFILE (絶対 / app からの相対) > <app>/Gemfile > <app>/gems.rb。無ければ nil
+        def gemfile_path
+          return @gemfile_path if defined?(@gemfile_path)
+          app = ctx.app_dir.to_s
+          env = ENV["BUNDLE_GEMFILE"].to_s
+          candidates = []
+          candidates << File.expand_path(env, app) unless env.empty?
+          candidates << File.join(app, "Gemfile") << File.join(app, "gems.rb")
+          @gemfile_path = candidates.find { File.file?(_1) }
+        end
+
         # Gemfile の中身 (無ければ nil)
         def gemfile
-          path = File.join(ctx.app_dir.to_s, "Gemfile")
-          File.file?(path) ? File.read(path) : nil
+          path = gemfile_path
+          path && File.read(path)
         rescue SystemCallError
           nil
         end
 
-        # Gemfile を解析した { gem 名 => Gemfile::Entry }。Gemfile が無ければ nil。
+        # Gemfile を解析した { gem 名 => Gemfile::Entry } (eval_gemfile 先を含む)。Gemfile が無ければ nil。
         def gemfile_entries
           return @gemfile_entries if defined?(@gemfile_entries)
           src = gemfile
-          @gemfile_entries = src && Hayate::BootReport::Gemfile.parse(src)
+          @gemfile_entries = src && Hayate::BootReport::Gemfile.parse(src, dir: File.dirname(gemfile_path))
+        end
+
+        # 子プロセスの payload が記録した gem の full_gem_path ({ name => path })。計測対象 app の bundle を指す。
+        def gem_paths
+          @gem_paths ||= begin
+            pl = get(ctx.result, :payloads)
+            lists = pl.is_a?(Hash) ? pl.values : []
+            lists.flatten.each_with_object({}) do |p, h|
+              specs = get(p, :specs)
+              next unless specs.is_a?(Hash)
+              specs.each { |name, info| h[name.to_s] ||= info[1] if info.is_a?(Array) && info[1] }
+            end
+          end
         end
       end
     end

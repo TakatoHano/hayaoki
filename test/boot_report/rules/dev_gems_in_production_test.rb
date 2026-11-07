@@ -88,4 +88,32 @@ class DevGemsInProductionTest < Minitest::Test
     assert_equal 1, s.size
     assert_in_delta 4.0, s[0].estimated_savings_ms
   end
+
+  def test_gem_after_if_block_in_dev_group_is_not_reported
+    gemfile = "group :development do\n  if RUBY_PLATFORM =~ /darwin/\n    gem \"terminal-notifier\"\n  end\n  gem \"pry-rails\"\nend\n"
+    with_app("Gemfile" => gemfile) do
+      assert_empty run_rule(K, make_report(gems: [gem_row("pry-rails", 10)]))
+    end
+  end
+
+  def test_bundle_gemfile_env_and_gems_rb
+    with_app("gems.rb" => %(gem "pry-rails"\n)) do
+      assert_equal 1, run_rule(K, make_report(gems: [gem_row("pry-rails", 10)])).size
+    end
+    with_app("other/Gemfile" => %(group :test do\n  gem "pry-rails"\nend\n), "Gemfile" => %(gem "pry-rails"\n)) do
+      old = ENV["BUNDLE_GEMFILE"]
+      ENV["BUNDLE_GEMFILE"] = "other/Gemfile"
+      begin
+        assert_empty run_rule(K, make_report(gems: [gem_row("pry-rails", 10)]))
+      ensure
+        ENV["BUNDLE_GEMFILE"] = old
+      end
+    end
+  end
+
+  def test_eval_gemfile_gems_inherit_enclosing_group
+    with_app("Gemfile" => %(group :test do\n  eval_gemfile "t.gemfile"\nend\n), "t.gemfile" => %(gem "pry-rails"\n)) do
+      assert_empty run_rule(K, make_report(gems: [gem_row("pry-rails", 10)]))
+    end
+  end
 end

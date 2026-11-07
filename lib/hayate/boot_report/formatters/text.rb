@@ -13,8 +13,10 @@ module Hayate
         PHASE_LABELS = { "vm_boot" => "vm boot", "bundler_require" => "bundler require", "initialize" => "initialize",
                          "eager_load" => "eager load", "boot" => "boot" }.freeze
 
-        def initialize(top: 10)
+        # redact: 文字列を受け取って伏せた文字列を返すもの (--redact)。切り詰める前に適用しないとパスが一致しない。
+        def initialize(top: 10, redact: nil)
           @top = top
+          @redact = redact
         end
 
         # Advisor の結果 (Suggestion の配列 / 警告の配列)。nil なら Suggestions の節を出さない。
@@ -33,6 +35,7 @@ module Hayate
           out = []
           header(out)
           phases(out)
+          categories(out)
           ranked(out, "Top gems (self time)", :gems, ->(r) { r.gems }, ->(e) { e["name"] }, "self_ms", breakdown: { "req" => "require_ms", "onload" => "on_load_ms" })
           ranked(out, "Top initializers (inclusive)", :inits, ->(r) { r.initializers }, ->(e) { [e["name"], e["context"]].compact.join(" ") }, "inclusive_ms",
                  breakdown: { "init body (own time, not blamed on gem)" => "init_body_ms" })
@@ -81,6 +84,18 @@ module Hayate
           out << ""
         end
 
+        def categories(out)
+          return if @reports.values.all? { |r| (r.categories || {}).empty? }
+          out << "Self time by category (median; boot - attributed = unattributed)"
+          @reports.each do |c, r|
+            cats = r.categories || {}
+            next if cats.empty?
+            tag = @conds.size > 1 ? " [#{c}]" : ""
+            cats.each { |k, v| out << Kernel.format("  %-22s %10s", "#{k}#{tag}", "#{fmt(med(v["self_ms"]))}") }
+          end
+          out << ""
+        end
+
         def ranked(out, title, _key, getter, namer, metric, breakdown: nil)
           out << "#{title} (top #{@top})"
           lists = @reports.transform_values { |r| Array(getter.call(r)) }
@@ -107,17 +122,18 @@ module Hayate
               line += Kernel.format(" %-20s", v ? "[#{fmt(v["min"])}-#{fmt(v["max"])}]" : "")
               e = idx[@conds.first][n]
               if breakdown && e
-                out << line
+                out << line.rstrip
                 parts = breakdown.filter_map do |l, kk|
                   x = e[kk] && med(e[kk])
                   "#{l} #{fmt(x)}" if x && x >= 0.05
                 end
+                next if parts.empty?
                 cat = e["category"] ? "#{e["category"]}: " : ""
                 out << "      #{cat}#{parts.join(", ")}".rstrip
                 next
               end
             end
-            out << line
+            out << line.rstrip
           end
           out << "  (ms, median)" if @conds.size > 1
           out << ""
@@ -241,9 +257,15 @@ module Hayate
           range ? "#{base} [#{fmt(s["min"])}-#{fmt(s["max"])}]" : base
         end
 
-        def trunc(s, w) = s.length > w ? "…#{s[-(w - 1)..]}" : s
+        def trunc(s, w)
+          s = @redact.call(s) if @redact
+          s.length > w ? "…#{s[-(w - 1)..]}" : s
+        end
 
-        def clip(l) = l.length > WIDTH ? l[0, WIDTH - 1] + "…" : l
+        def clip(l)
+          l = @redact.call(l) if @redact
+          l.length > WIDTH ? l[0, WIDTH - 1] + "…" : l
+        end
       end
     end
   end

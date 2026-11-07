@@ -54,7 +54,7 @@ module Hayate
         o.on("--no-suggestions", "do not print improvement suggestions") { opts[:suggestions] = false }
         o.on("--initializer-threshold MS", Float, "app initializer threshold for suggestions (default 50)") { |v| opts[:initializer_threshold] = v }
         o.on("--gem-threshold MS", Float, "gem self time threshold for suggestions (default 30)") { |v| opts[:gem_threshold] = v }
-        o.on("--redact", "replace home dir with ~, app root with <app>, gem paths with <gem:name> (json/speedscope)") { opts[:redact] = true }
+        o.on("--redact", "replace home dir with ~, app root with <app>, gem paths with <gem:name> (all formats)") { opts[:redact] = true }
         o.on("--version", "show version") { opts[:action] = :version }
         o.on("-h", "--help", "show this help") { opts[:action] = :help }
       end
@@ -128,7 +128,11 @@ module Hayate
           BootReport::Formatters::Json.new.with_suggestions(*suggest(result, reports, opts, app_dir)).format(reports)
         else
           require_relative "boot_report/formatters/text"
-          BootReport::Formatters::Text.new(top: opts[:top]).with_suggestions(*suggest(result, reports, opts, app_dir)).format(reports)
+          redact = opts[:redact] && begin
+            require_relative "boot_report/formatters/redact"
+            BootReport::Formatters::Redact.new(app_dir: app_dir).method(:apply)
+          end
+          BootReport::Formatters::Text.new(top: opts[:top], redact: redact).with_suggestions(*suggest(result, reports, opts, app_dir)).format(reports)
         end
       end
     end
@@ -190,14 +194,14 @@ module Hayate
   end
 end
 
-# --redact: render の結果 (json / speedscope のみ) のパスを伏せる。既存の render を書き換えずに差し込む。
+# --redact: render の結果 (text / json / speedscope) のパスを伏せる。既存の render を書き換えずに差し込む。
 module Hayate
   module CLIRedact
     private
 
     def render(result, opts, app_dir = Dir.pwd)
       text = super
-      return text unless opts[:redact] && %w[json speedscope].include?(opts[:format])
+      return text unless opts[:redact]
       require_relative "boot_report/formatters/redact"
       BootReport::Formatters::Redact.new(app_dir: app_dir).apply(text)
     end

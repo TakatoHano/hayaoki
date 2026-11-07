@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "tmpdir"
 require "hayate"
 require "hayate/boot_report/report"
 require "hayate/boot_report/formatters/text"
@@ -100,11 +101,62 @@ class BootReportFormattersTest < Minitest::Test
 end
 
 class BootReportFormattersExtraTest < Minitest::Test
+  def helper = (@helper ||= BootReportFormattersTest.new("x"))
+  def report(cond) = helper.report(cond)
+  def st(m) = helper.st(m)
+
   def test_redact
     require "hayate/boot_report/formatters/redact"
     r = Hayate::BootReport::Formatters::Redact.new(app_dir: "/Users/x/app", home: "/Users/x")
     out = r.apply('["/Users/x/app/a.rb","/Users/x/.gem/ruby/3.4.0/gems/rack-3.0.1/lib/rack.rb","/Users/x/y"]')
     assert_equal '["<app>/a.rb","<gem:rack>/lib/rack.rb","~/y"]', out
+  end
+
+  def test_redact_git_gem_with_sha_and_realpath
+    require "hayate/boot_report/formatters/redact"
+    Dir.mktmpdir do |d|
+      real = File.realpath(d)
+      r = Hayate::BootReport::Formatters::Redact.new(app_dir: d, home: "/nonexistent")
+      out = r.apply(%(["/h/.bundle/ruby/4.0.0/bundler/gems/foo-abcdef123456/lib/foo.rb","#{real}/a.rb","#{File.expand_path(d)}/b.rb"]))
+      assert_equal '["<gem:foo>/lib/foo.rb","<app>/a.rb","<app>/b.rb"]', out
+    end
+  end
+
+  def test_json_omits_stderr_tail_of_failed_runs
+    rep = report("warm")
+    meta = rep.meta.merge("failed_runs" => [{ "reason" => "boot_error", "message" => "boom", "exit_status" => 1, "stderr_tail" => "SECRET=abc" }])
+    rep = Hayate::BootReport::Report.new(**Hayate::BootReport::Report::ATTRS.to_h { [_1, rep.public_send(_1)] }, meta: meta) rescue nil
+    out = Hayate::BootReport::Formatters::Json.new.format("warm" => rep)
+    refute_includes out, "SECRET"
+    refute_includes out, "stderr_tail"
+    assert_includes out, "boom"
+  end
+
+  def test_text_shows_categories
+    rep = report("warm")
+    h = Hayate::BootReport::Report::ATTRS.to_h { [_1, rep.public_send(_1)] }
+    h[:categories] = { "gem" => { "self_ms" => st(100.0) }, "unattributed" => { "self_ms" => st(20.0) } }
+    out = Hayate::BootReport::Formatters::Text.new.format("warm" => Hayate::BootReport::Report.new(**h))
+    assert_match(/unattributed\s+20\.0/, out)
+  end
+
+  def test_text_redacts_before_truncation
+    rep = report("warm")
+    h = Hayate::BootReport::Report::ATTRS.to_h { [_1, rep.public_send(_1)] }
+    app = "/Users/x/" + "very-long-directory-name/" * 4 + "app"
+    h[:meta] = rep.meta.merge("app_dir" => app)
+    h[:on_loads] = [{ "name" => "active_record", "source" => "#{app}/config/initializers/a.rb:1",
+                      "inclusive_ms" => st(44), "self_ms" => st(40) }]
+    red = Hayate::BootReport::Formatters::Redact.new(app_dir: app, home: "/Users/x").method(:apply)
+    out = Hayate::BootReport::Formatters::Text.new(redact: red).format("warm" => Hayate::BootReport::Report.new(**h))
+    assert_includes out, "app: <app>"
+    assert_includes out, "<app>/config/initializers/a.rb:1"
+    refute_includes out, "very-long-directory-name"
+  end
+
+  def test_text_omits_empty_breakdown_line
+    out = Hayate::BootReport::Formatters::Text.new.format("warm" => report("warm"))
+    refute_match(/^\s+\w+:\s*$/, out)
   end
 
   def test_cli_accepts_redact

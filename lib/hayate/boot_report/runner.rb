@@ -178,7 +178,8 @@ module Hayate
         yield
       rescue RunError => e
         @failures << { "condition" => cond.to_s, "phase" => phase.to_s, "index" => index, "reason" => e.reason.to_s,
-                       "message" => e.message.lines.first.to_s.strip, "stderr_tail" => e.stderr_tail }
+                       "message" => e.message.lines.first.to_s.strip, "exit_status" => e.exit_status,
+                       "error_class" => e.probe_error && e.probe_error["class"], "stderr_tail" => e.stderr_tail }
         e
       end
 

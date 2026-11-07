@@ -114,6 +114,7 @@ module Hayate
             e = a[:initializers][[s.name, ctx]]
             e["inclusive_ms"] += dur_ms
             e["init_body_ms"] += self_ms
+            a[:categories]["init_body"]["self_ms"] += self_ms
             e["owner"] = o.name
             # 時間は付けないが、initializer を定義していること (= Railtie/Engine) は記録する
             g = a[:gems][o.name]
@@ -126,6 +127,11 @@ module Hayate
           when K_EAGER
             a[:phase]["eager_load"] = a[:phase]["eager_load"].to_f + dur_ms unless eager_ancestor?(s, pmap)
           end
+        end
+        # 帰属されなかった時間 (run_load_hooks 自体、phase / eager_load span の自己時間、span の外) を別掲する
+        if boot_us
+          attributed = a[:categories].values.sum { |c| c["self_ms"] }
+          a[:categories]["unattributed"]["self_ms"] = [boot_us / 1000.0 - attributed, 0.0].max
         end
         a
       end
@@ -289,6 +295,12 @@ module Hayate
           @gems = gem_prefixes.uniq.sort_by { |pf, _| -pf.size }
           root = payload["rails_root"] || @pwd
           @app = root && prefixes(root)
+          # アプリ自身が gem (gemspec / path: "." / engine の dummy app) のとき、gem の prefix がアプリ root を含んでしまう。
+          # その場合は app/config/lib/db 配下を gem より先に app とみなす。
+          @app_dirs = nil
+          if @app && @gems.any? { |pf, _| @app.any? { |a| under?(a, pf) } }
+            @app_dirs = @app.flat_map { |a| %w[app config lib db].map { |d| File.join(a, d) } }
+          end
           @stdlib = Array(payload["libdir"]).flat_map { |d| prefixes(d) }.uniq
         end
 
@@ -316,6 +328,7 @@ module Hayate
 
         def resolve_dir(dir)
           dirs = [dir, realpath(dir)].uniq
+          return Owner.new("app", "app") if @app_dirs&.any? { |pf| dirs.any? { |d| under?(d, pf) } }
           # 最長一致: gem の full_gem_path / extension_dir
           hit = @gems.find { |pf, _| dirs.any? { |d| under?(d, pf) } }
           return Owner.new("gem", hit[1]) if hit

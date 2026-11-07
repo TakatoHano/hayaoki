@@ -48,6 +48,7 @@ module Hayate
         }.freeze
 
         def call
+          return [] unless gemfile_entries # Gemfile が無ければ直接依存か判定できないので提案しない
           cands = candidates
           return [] if cands.empty?
           used = referenced(cands)
@@ -96,8 +97,8 @@ module Hayate
         end
 
         def railtie_files?(name)
-          spec = Gem.loaded_specs[name] or return false
-          Dir.glob(File.join(spec.full_gem_path, "lib", "**", "{railtie,engine}.rb")).any?
+          path = gem_paths[name] || Gem.loaded_specs[name]&.full_gem_path or return false # 子プロセスの記録を優先
+          Dir.glob(File.join(path, "lib", "**", "{railtie,engine}.rb")).any?
         rescue StandardError
           false
         end
@@ -107,7 +108,9 @@ module Hayate
           return KNOWN_CONSTANTS[name] if KNOWN_CONSTANTS.key?(name)
           parts = name.split(/[-]/)
           camel = ->(s) { s.split("_").map { |w| w[0].to_s.upcase + w[1..].to_s }.join }
-          toks = [parts.map(&camel).join("::"), parts.map(&camel).join, camel.call(parts.first)]
+          toks = [parts.map(&camel).join("::"), parts.map(&camel).join]
+          # rack-attack → Rack のように先頭だけでは広すぎるので、単一セグメントの gem 名だけ
+          toks << camel.call(parts.first) if parts.size == 1
           toks << name # require "foo-bar" の文字列
           toks.uniq
         end

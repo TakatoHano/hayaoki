@@ -49,7 +49,7 @@ class UnusedHeavyGemTest < Minitest::Test
   end
 
   def test_constants_from_payload_are_used_for_search
-    with_app("lib/a.rb" => "Zed::Thing\n") do
+    with_app("Gemfile" => %(gem "whatever"\n), "lib/a.rb" => "Zed::Thing\n") do
       assert_empty run_rule(K, report(gem_row("whatever", 50, constants: ["Zed"])))
       s = run_rule(K, report(gem_row("whatever", 50, constants: ["Nope"]))).fetch(0)
       assert_equal :low, s.confidence
@@ -134,6 +134,40 @@ class UnusedHeavyGemTest < Minitest::Test
       assert_equal 1, run_rule(K, report(gem_row("slowthing", 90))).size
       ms = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - t) * 1000
       assert_operator ms, :<, 1500, "scan took #{ms.round}ms"
+    end
+  end
+
+  def test_no_gemfile_means_no_suggestions
+    with_app("app/models/user.rb" => "class User; end\n") do
+      assert_empty run_rule(K, report(gem_row("aws-sdk-s3", 90)))
+    end
+  end
+
+  def test_multi_segment_name_does_not_match_first_segment_only
+    # Rack / Net / Google は多くのアプリに出てくるので rack-attack の参照とはみなさない
+    with_app("Gemfile" => %(gem "rack-attack"\n), "app/a.rb" => "Rack::Request.new\n") do
+      assert_equal 1, run_rule(K, report(gem_row("rack-attack", 50))).size
+    end
+    with_app("Gemfile" => %(gem "rack-attack"\n), "app/a.rb" => "Rack::Attack.throttle\n") do
+      assert_empty run_rule(K, report(gem_row("rack-attack", 50)))
+    end
+  end
+
+  def test_railtie_detected_from_child_payload_specs
+    Dir.mktmpdir("hayate-gem") do |gdir|
+      FileUtils.mkdir_p(File.join(gdir, "lib/foo"))
+      File.write(File.join(gdir, "lib/foo/railtie.rb"), "")
+      res = Struct.new(:payloads).new({ "warm" => [{ "status" => "ok", "specs" => { "foo_bar" => ["1.0", gdir, nil] } }] })
+      with_app("Gemfile" => %(gem "foo_bar"\n), "app/a.rb" => "1\n") do
+        assert_empty run_rule(K, report(gem_row("foo_bar", 50)), result: res)
+        assert_equal 1, run_rule(K, report(gem_row("foo_bar", 50))).size
+      end
+    end
+  end
+
+  def test_gems_from_eval_gemfile_count_as_direct
+    with_app("Gemfile" => %(eval_gemfile "gems/extra.gemfile"\n), "gems/extra.gemfile" => %(gem "foo_bar"\n), "app/a.rb" => "1\n") do
+      assert_equal 1, run_rule(K, report(gem_row("foo_bar", 50))).size
     end
   end
 end
