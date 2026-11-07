@@ -8,6 +8,7 @@
 - Phase breakdown (vm boot, bundler require, initialize) and per-gem and per-initializer rankings.
 - Improvement suggestions, printed as candidates: bootsnap effectiveness, heavy app initializers, unused heavy gems, dev gems in production, and eager load trade-offs. Disable with `--no-suggestions`.
 - `tzinfo_eager_load` suggestion: `TZInfo.eager_load!` takes 200–330 ms in Linux containers (see `bench/tzinfo_eager_load.rb`), and it can be made lazy with one line.
+- `devise_reload_routes` and `controller_action_methods` suggestions, measured on Mastodon and Redmine with `bench/boot_variants.rb`.
 - A ranking of `config.eager_load_namespaces` entries in the text output, and `eager_namespaces` in the JSON output.
 - Options for runs, environment, bootsnap mode (`warm`, `cold`, `both`), entry file, timeout, output file, and rows per ranking, plus thresholds for suggestions.
 - The probe has no runtime dependencies and writes JSON with its own encoder.

@@ -93,15 +93,18 @@ module Hayate
         end
 
         # 子プロセスの payload が記録した gem の full_gem_path ({ name => path })。計測対象 app の bundle を指す。
-        def gem_paths
-          @gem_paths ||= begin
-            pl = get(ctx.result, :payloads)
-            lists = pl.is_a?(Hash) ? pl.values : []
-            lists.flatten.each_with_object({}) do |p, h|
-              specs = get(p, :specs)
-              next unless specs.is_a?(Hash)
-              specs.each { |name, info| h[name.to_s] ||= info[1] if info.is_a?(Array) && info[1] }
-            end
+        def gem_paths = @gem_paths ||= spec_field(1)
+
+        # 子プロセスが記録した gem のバージョン (アプリの bundle のもの)
+        def gem_versions = @gem_versions ||= spec_field(0)
+
+        def spec_field(i)
+          pl = get(ctx.result, :payloads)
+          lists = pl.is_a?(Hash) ? pl.values : []
+          lists.flatten.each_with_object({}) do |p, h|
+            specs = get(p, :specs)
+            next unless specs.is_a?(Hash)
+            specs.each { |name, info| h[name.to_s] ||= info[i] if info.is_a?(Array) && info[i] }
           end
         end
       end

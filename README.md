@@ -56,6 +56,8 @@ Phases (median)
 | `bootsnap_ineffective` | high | bootsnap missing, or its cache not helping |
 | `heavy_app_initializer` | medium | app initializers slower than `--initializer-threshold` |
 | `tzinfo_eager_load` | medium | `TZInfo.eager_load!` loading every time zone at boot (see below) |
+| `devise_reload_routes` | medium (Devise 5+) / low | Devise reloading the routes before eager loading; they are loaded again later in boot |
+| `controller_action_methods` | low | `AbstractController.eager_load!` computing `action_methods` for every controller at boot |
 | `unused_heavy_gem` | low | heavy gems with no references in app code (candidates for `require: false`) |
 | `eager_load_tradeoff` | info | eager loading taking a large share of boot |
 
@@ -73,6 +75,20 @@ In production, Rails adds `TZInfo` to `config.eager_load_namespaces`, and `TZInf
 | macOS (Apple silicon, local) | 112 ms |
 
 Removing it (`Rails.application.config.eager_load_namespaces.delete(TZInfo)` in an initializer) leaves 5–15 ms at boot. Each zone is then loaded on first use, in under 1 ms. The trade-off is that forking servers no longer share the zone data copy-on-write.
+
+### Measured on real applications
+
+[`bench/boot_variants.rb`](https://github.com/TakatoHano/hayate/blob/main/bench/boot_variants.rb) boots an application with one setting changed at a time (median of fresh processes, GitHub-hosted runner, official Docker images, `RAILS_ENV=production`). The `real-apps` workflow runs it. Boot times vary by several hundred ms between runners, so compare within one run.
+
+| Change | Mastodon 4.7.5 | Redmine 7.0 | Cost moved to later |
+| --- | --- | --- | --- |
+| `eager_load_namespaces.delete(TZInfo)` | −128 ms | −193 to −328 ms | under 1 ms per zone used |
+| Devise `config.reload_routes = false` | −194 ms | (no Devise) | none: the routes are loaded once, later in boot |
+| `eager_load_namespaces.delete(AbstractController)` | −201 ms | −31 ms | 217 ms in total across 336 controllers, about 0.65 ms on each controller's first request |
+| `eager_load_namespaces.delete(I18n)` | −108 ms | −286 ms | 182 ms / 317 ms on the first translation |
+| `config.i18n.available_locales = [:en]` | no gain | no gain | every locale file is still parsed |
+
+hayate has no I18n suggestion: making it lazy only moves the whole cost to the first translation, which nearly every request needs.
 
 ## How it works
 

@@ -9,6 +9,9 @@ require "hayate/boot_report/rules/bootsnap_ineffective"
 require "hayate/boot_report/rules/heavy_app_initializer"
 require "hayate/boot_report/rules/unused_heavy_gem"
 require "hayate/boot_report/rules/eager_load_tradeoff"
+require "hayate/boot_report/rules/tzinfo_eager_load"
+require "hayate/boot_report/rules/devise_reload_routes"
+require "hayate/boot_report/rules/controller_action_methods"
 
 module RuleHelper
   B = Hayate::BootReport
