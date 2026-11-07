@@ -10,6 +10,8 @@ require "rbconfig"
 ROOT = File.expand_path("..", __dir__)
 PROBE = File.join(ROOT, "lib/hayate/probe.rb")
 FIXTURES = File.join(__dir__, "fixtures")
+# CI ランナー (特に macOS) は時間のばらつきが大きいので、上限側の許容幅を広げる
+TIMING_SLACK = ENV["CI"] ? (RUBY_PLATFORM.include?("darwin") ? 4 : 2) : 1
 
 # 子プロセスに bundle exec 由来の環境を持ち込まない (probe を -r で先頭に読ませるため)
 CLEAN_ENV = {

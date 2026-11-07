@@ -63,7 +63,7 @@ class ProbeRailsTest < Minitest::Test
     slowgem = rep.feature("/slowgem/lib/slowgem.rb").first
     refute_nil slowgem
     assert_operator slowgem.self_ms, :>=, 99
-    assert_operator slowgem.self_ms, :<, 99 + 25
+    assert_operator slowgem.self_ms, :<, 99 + 25 * TIMING_SLACK
     inner = rep.feature("/slowgem/inner.rb")
     assert_equal 1, inner.size
     assert_equal ProbeReport::K_RR, inner.first.kind

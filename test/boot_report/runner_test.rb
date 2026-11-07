@@ -60,7 +60,7 @@ class BootReportRunnerTest < Minitest::Test
       assert_kind_of Numeric, ov["ratio"]
       assert_operator ov["baseline_ms"], :>, 0
       # 1 回ごとのノイズ (±15〜20ms) があるので、基準の ±10% 程度の範囲で「極端な値でないこと」だけを見る
-      tol = [ov["baseline_ms"] * 0.1, 30.0].max
+      tol = [ov["baseline_ms"] * 0.1, 30.0].max * TIMING_SLACK
       assert_in_delta 0, ov["diff_ms"], tol, "#{cond} overhead diff #{ov["diff_ms"]}"
       JSON.generate(rep.to_h)
     end
