@@ -7,6 +7,11 @@ on:
       runs:
         description: measured runs per condition
         default: "5"
+      task:
+        description: "report: hayate boot-report / variants: bench/boot_variants.rb"
+        type: choice
+        options: [report, variants]
+        default: report
 
 permissions:
   contents: read
@@ -60,6 +65,7 @@ jobs:
       - name: Pull image
         run: docker pull -q ${{ matrix.image }}
       - name: boot-report
+        if: inputs.task == 'report'
         run: |
           mkdir -p out && chmod 777 out
           docker run --rm --network host --entrypoint bash -u 0 ${{ matrix.env }} \
@@ -70,6 +76,16 @@ jobs:
               ruby -I/hayate/lib /hayate/exe/hayate boot-report --runs ${{ inputs.runs }} --bootsnap both --redact \
                 --format json --output /out/report.json .
               ruby -I/hayate/lib /hayate/exe/hayate boot-report --runs ${{ inputs.runs }} --redact . > /out/report.txt
+            '
+      - name: variants
+        if: inputs.task == 'variants'
+        run: |
+          mkdir -p out && chmod 777 out
+          docker run --rm --network host --entrypoint bash -u 0 ${{ matrix.env }} \
+            -v "$PWD:/hayate:ro" -v "$PWD/out:/out" -w ${{ matrix.dir }} ${{ matrix.image }} -c '
+              set -e
+              ${{ matrix.prep }}
+              ruby /hayate/bench/boot_variants.rb ${{ inputs.runs }} > /out/report.txt
             '
       - name: Summary
         if: always()
