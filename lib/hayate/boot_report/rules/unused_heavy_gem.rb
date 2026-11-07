@@ -115,7 +115,7 @@ module Hayate
           toks.uniq
         end
 
-        # 各ファイルを 1 回だけ読み、全トークンをまとめた正規表現で照合する。使われていた gem 名の Set を返す。
+        # 各ファイルを 1 回だけ読み、全トークンをまとめた正規表現で比べる。使われていた gem 名の Set を返す。
         def referenced(cands)
           owner = Hash.new { |h, k| h[k] = [] }
           cands.each { |c| c[:tokens].each { |t| owner[t.downcase] << c[:name] } }

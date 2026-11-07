@@ -106,7 +106,7 @@ module Hayate::Probe
     end
   end
   # require_relative も Kernel に直接定義する。Kernel への prepend は bootsnap の load path cache と組み合わさると
-  # boot を数%遅くするため使わない (spike/04_probe/bench.sh, probe.md §1.4)。元メソッドは基準パスが壊れるので呼ばない。
+  # boot を数%遅くするため使わない (spike/04_probe/bench.sh, probe.md §1.4)。元メソッドは基準パスが正しく解決されないので呼ばない。
   ::Kernel.module_eval do
     alias_method :__hayate_require_relative, :require_relative
     alias_method :require_relative, :require_relative

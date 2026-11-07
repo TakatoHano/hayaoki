@@ -117,7 +117,7 @@ module Hayate::Probe
 
   # --- feature の解決 -----------------------------------------------------------
   # 他スレッドが同時に require すると $LOADED_FEATURES.last は自分のものとは限らない。
-  # 速い経路は last が name に一致する場合、遅い経路は末尾から最大 SCAN_MAX 件を逆走査、
+  # 速い方法は last が name に一致する場合、遅い方法は末尾から最大 SCAN_MAX 件を逆走査、
   # 見つからなければ last にフォールバックする (従来の挙動)。
   SCAN_MAX = 200
 
@@ -302,7 +302,7 @@ module Hayate::Probe
   NEEDS_ESCAPE = /["\\\x00-\x1f]/
 
   # 自前の最小 JSON エンコーダ。対象は String / Symbol / Integer / Float / nil / true / false / Array / Hash。
-  # 文字列の大半はエスケープ不要なので、検査だけして引用符で囲む速い経路を先に試す。
+  # 文字列の大半はエスケープ不要なので、確認だけして引用符で囲む速い方法を先に試す。
   def self.encode(v)
     case v
     when String
@@ -441,7 +441,7 @@ end
   end
 end
 
-# require_relative は Kernel に直接定義し直す。元のメソッドは基準パスが壊れるので呼ばず、
+# require_relative は Kernel に直接定義し直す。元のメソッドは基準パスが正しく解決されないので呼ばず、
 # gem_original_require (無ければ builtin の退避先) に委譲する (§1.4)。
 ::Kernel.module_eval do
   alias_method :require_relative, :require_relative

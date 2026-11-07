@@ -25,3 +25,17 @@ jobs:
         run: gem install --no-document minitest rake rails bootsnap
       - name: Test
         run: ruby -Ilib -Itest -e 'Dir["test/**/*_test.rb"].each { load _1 }'
+
+  ai-words:
+    # AI らしい日本語の語彙チェック (tools/ai-words)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: tools/ai-words/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: tools/ai-words
+      - run: node tools/ai-words/check.mjs --github

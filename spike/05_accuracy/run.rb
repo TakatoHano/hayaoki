@@ -1,6 +1,6 @@
 c=->{Process.clock_gettime(Process::CLOCK_MONOTONIC)}
 st=->(a){[a.sum/a.size*1000,a.min*1000]}
-puts "A: probe無し sleep実測(ms) mean/min"
+puts "A: probe無し sleep計測(ms) mean/min"
 [0.1,0.05,0.03].each{|s| a=20.times.map{t=c.();sleep s;c.()-t}; printf("%.0f: %.2f / %.2f\n",s*1000,*st.(a))}
 puts "B: probe有り (span vs 内部)"
 D=__dir__

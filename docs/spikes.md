@@ -12,7 +12,7 @@ require が true を返した直後の `$LOADED_FEATURES.last` から、今読�
 
 できる。ネストした require、循環 require、C拡張（json の .bundle）、autoload、Kernel.require、load のいずれでも、true を返した直後の $LOADED_FEATURES.last が自分自身と一致した（Ruby は親を子より後に追加する）。autoload は Kernel#require を経由する。例外で抜けた require は $LOADED_FEATURES に追加されない（スタックの巻き戻しは必要）。
 
-### 発見した落とし穴
+### 発見した注意点
 
 - require_relative を prepend で包んで super を呼ぶと、相対パスの基準が probe ファイルになり LoadError になる。対策として、caller_locations で呼び出し元の絶対パスを解決してから委譲する。
 - 委譲すると require_relative と内側の require が二重記録されうる。
@@ -52,7 +52,7 @@ bootsnap および Zeitwerk が有効な Rails アプリの起動を壊さず、
 - 未捕捉（probe より前の RubyGems 初期化分）は 57 件。B では bundler・bootsnap を含め 228 件。
 - probe 読み込み後の未捕捉は各パターン 5〜9 件。C拡張が内部で rb_require を直接呼んだと推測しているが、未確認である。
 
-### 発見した落とし穴
+### 発見した注意点
 
 1. require_relative を require に委譲すると、-r で先に読むパターンで Bundler::GemNotFound により boot が失敗した。gem_original_require に委譲することで解消した。根本原因は未特定である。
 2. Ruby 4.0 の bundled_gems.rb は replace_require で Kernel.require（singleton）を alias_method :no_warning_require で退避する。このとき probe のフックごと退避されるため、super が "no superclass method 'require'" で失敗する。Bundler.require は Kernel.require を使うため、boot が失敗する。暫定対策として、probe 読み込み時に元メソッドを保存し bind_call で呼ぶ。副作用として、bundled gem の警告が出なくなり、後続の上書きを無視する。
@@ -60,13 +60,13 @@ bootsnap および Zeitwerk が有効な Rails アプリの起動を壊さず、
 ### 設計への反映
 
 - probe は `-r` で先に読み込むことを必須とする。
-- require_relative は gem_original_require に委譲する（落とし穴1への対策）。
-- Kernel.require は元メソッドを保存して bind_call で呼ぶ暫定対策を採る（落とし穴2への対策。中核設計で再検討する）。
+- require_relative は gem_original_require に委譲する（注意点1への対策）。
+- Kernel.require は元メソッドを保存して bind_call で呼ぶ暫定対策を採る（注意点2への対策。中核設計で再検討する）。
 
 ### 最終設計での扱い
 
 - Kernel への prepend はやめて alias chain にした（probe.md §1.3）。
-- bind_call の暫定策は廃止した。bootsnap と Zeitwerk の require ラッパーを素通りしてしまうためである（probe.md §1.2）。
+- bind_call の暫定策は廃止した。bootsnap と Zeitwerk の require ラッパーを呼ばれなくなるためである（probe.md §1.2）。
 
 ### スクリプト
 
@@ -109,7 +109,7 @@ probe を有効にしたときの boot 時間増加は 5% 未満に収まるか�
 
 修正後はオーバーヘッドが 5% 未満に収まった。
 
-### 発見した落とし穴
+### 発見した注意点
 
 - require_relative を require に委譲すると、本来 require_relative が通らない RubyGems の require を毎回経由することになり、遅くなった。gem の探索が重いことが原因と推測している（未検証）。
 

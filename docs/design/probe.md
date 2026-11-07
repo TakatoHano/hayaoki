@@ -7,7 +7,7 @@
 ## 0. 結論の要約
 
 1. **require 系のフックには prepend を使わず、alias chain（`alias_method` で退避して `require` を再定義する）で入れる。** `Kernel#require`、`Kernel.require`、`Kernel#load`、`Kernel.load` が対象。`require_relative` は Kernel に直接定義し直す（prepend しない）。
-   - prepend を使う案は3つとも壊れる。素朴な prepend、spike 02 の暫定策（bind_call）、`Bundler::Runtime#require` だけを包む案のいずれも boot が失敗するか、bootsnap と Zeitwerk の require ラッパーを素通りしてしまう。Zeitwerk を素通りすると、暗黙の名前空間（ファイルを持たない `app/models/admin/` など）を含むアプリで `LoadError` になる。
+   - prepend を使う案は3つとも失敗する。素朴な prepend、spike 02 の暫定策（bind_call）、`Bundler::Runtime#require` だけを包む案のいずれも boot が失敗するか、bootsnap と Zeitwerk の require ラッパーを呼ばずに終わる。Zeitwerk が呼ばれないと、暗黙の名前空間（ファイルを持たない `app/models/admin/` など）を含むアプリで `LoadError` になる。
    - alias chain なら bundled_gems、bootsnap、Zeitwerk の alias chain と共存できる。どのラッパーも呼ばれ、bundled_gems の警告も残る。オーバーヘッドは +1.3〜1.4%（JSON 書き出しを含む）。
 2. **Kernel には何も prepend しない。** 空のモジュールを prepend するだけで、bootsnap の load path cache が有効なときに boot が 3〜9% 遅くなった。
 3. Rails 関連のフック（initializer、on_load、eager_load、Bundler.require、`initialize!`）は対象のクラスごとに prepend する。インストールは遅延させ、require が返った直後に `$LOADED_FEATURES.last` の末尾一致で判定する。
@@ -20,7 +20,7 @@
 
 ### 1.1 根本原因
 
-`alias_method :new, :require` は、**prepend されたモジュールのメソッドを含めて** `require` を探索し、見つかった本体を class の origin に複製する。実験（`spike/04_alias/01_alias_semantics.rb`）で確認した挙動は次のとおり。
+`alias_method :new, :require` は**prepend されたモジュールのメソッドを含めて** `require` を探索し、見つかった本体を class の origin に複製する。実験（`spike/04_alias/01_alias_semantics.rb`）で確認した挙動は次のとおり。
 
 | 対象 | prepend 後に alias chain された場合の挙動 |
 |---|---|
@@ -33,7 +33,7 @@
 - bootsnap の `load_path_cache/core_ext/kernel_require.rb`: `Kernel#require`
 - Zeitwerk の `core_ext/kernel.rb`: `Kernel#require` と `class << self` の両方（`module_function`）
 
-spike 02 で instance 側が壊れなかったように見えたのは、壊れ方が「失敗」ではなく「**素通り**」だったためである。Zeitwerk が退避した `zeitwerk_original_require` は Hook の複製になり、bootsnap の `require` は Zeitwerk の `def require` に上書きされて呼ばれなくなっていた（付録 A-2 の呼出回数 0）。
+spike 02 で instance 側が失敗しなかったように見えたのは、失敗の仕方が「例外」ではなく「**呼ばれない**」だったためである。Zeitwerk が退避した `zeitwerk_original_require` は Hook の複製になり、bootsnap の `require` は Zeitwerk の `def require` に上書きされて呼ばれなくなっていた（付録 A-2 の呼出回数 0）。
 
 さらに bundled_gems には**配線の交差**がある。`define_method` の中で `kernel_class.send(:no_warning_require, name)` を呼ぶため、次のようにつながる。
 
@@ -42,7 +42,7 @@ spike 02 で instance 側が壊れなかったように見えたのは、壊れ�
 
 `Bundler::Runtime#require` だけを包む案（instance だけ prepend し、singleton はフックしない）が失敗するのはこの交差のためである。Bundler.require は `Kernel.require` を呼び、そこから instance 側の Hook の複製に入って `super` で落ちる（付録 A-2 の `runtime`）。
 
-### 1.2 案の比較（実測。`spike/04_alias/run_variants.sh`）
+### 1.2 案の比較（計測。`spike/04_alias/run_variants.sh`）
 
 | 案 | 内容 | boot | bootsnap / Zeitwerk / bundled_gems のラッパー | bundled_gems の警告 | boot 時間（warm bootsnap） |
 |---|---|---|---|---|---|
@@ -52,7 +52,7 @@ spike 02 で instance 側が壊れなかったように見えたのは、壊れ�
 | runtime | instance だけ prepend し、`Bundler::Runtime#require` を包む | **失敗**（1.1 の交差のため） | - | - | - |
 | **chain（推奨）** | instance と singleton を alias chain で包む | 成功 | 1414 / 649 / 705 回 | 残る | **+1.2%** |
 
-bindcall と callee は、暗黙の名前空間を持たない小さなアプリでは boot が通る。そのため気付きにくく、もっとも危険な案である。Zeitwerk は、ファイルを持たないディレクトリの autoload でディレクトリのパスを `Kernel#require` に渡し、自前のラッパーの中で処理する。このラッパーを素通りすると、RubyGems の require にディレクトリのパスが届いて `LoadError` になる。
+bindcall と callee は、暗黙の名前空間を持たない小さなアプリでは boot が通る。そのため気付きにくく、もっとも危険な案である。Zeitwerk は、ファイルを持たないディレクトリの autoload でディレクトリのパスを `Kernel#require` に渡し、自前のラッパーの中で処理する。このラッパーが呼ばれないと、RubyGems の require にディレクトリのパスが届いて `LoadError` になる。
 
 ### 1.3 推奨: alias chain 方式
 
@@ -66,10 +66,10 @@ bindcall と callee は、暗黙の名前空間を持たない小さなアプリ
 end
 ```
 
-この方式が壊れにくい理由は次のとおり。
+この方式が失敗しにくい理由は次のとおり。
 
-- **名前で呼ぶので super に依存しない。** 後から誰かが alias で退避すると、複製されるのは probe のラッパーである。複製の中身は `__hayate_require` を名前で呼ぶだけなので、どこに複製されても正しく動く。bundled_gems の交差した配線でも、どの経路も probe のラッパーをちょうど1回通る（付録 A-4 で実際のスタックを確認した）。
-- **後から入る上書きを潰さない。** probe はチェーンの一番内側に入るので、外側の bootsnap、Zeitwerk、bundled_gems の処理はすべて実行される。bundled_gems の警告も残る。
+- **名前で呼ぶので super に依存しない。** 後から誰かが alias で退避すると、複製されるのは probe のラッパーである。複製の中身は `__hayate_require` を名前で呼ぶだけなので、どこに複製されても正しく動く。bundled_gems の交差した配線でも、どの呼び出しも probe のラッパーをちょうど1回通る（付録 A-4 で実際のスタックを確認した）。
+- **後から入る上書きを消さない。** probe はチェーンの一番内側に入るので、外側の bootsnap、Zeitwerk、bundled_gems の処理はすべて実行される。bundled_gems の警告も残る。
 - **後から prepend されても動く。** 他のライブラリが後で Kernel に prepend しても、`super` で origin に来ればチェーンをたどる。
 - **バージョン差の影響を受けにくい。** Ruby 3.2 には `bundled_gems.rb` が無く（3.3 で追加）、Bundler 2.4 系も `replace_require` を呼ばない。これらの環境ではチェーンが短くなるだけで、probe のコードは変わらない。依存しているのは `alias_method` と再定義という Ruby 1.x 以来の挙動だけである。
 - **読み込みが後になっても動く。** probe が他のライブラリより後に読み込まれた場合は、チェーンの一番外側に入る。
@@ -78,7 +78,7 @@ end
 
 | 代償 | 対策 |
 |---|---|
-| probe が一番内側にいるため、bootsnap のパス解決や Zeitwerk のコールバック（`__on_file_autoloaded`、Zeitwerk の `on_load`）の時間は親 span の self time に入る | 実測では無視できる量。設計上の性質として明記する |
+| probe が一番内側にいるため、bootsnap のパス解決や Zeitwerk のコールバック（`__on_file_autoloaded`、Zeitwerk の `on_load`）の時間は親 span の self time に入る | 計測では無視できる量。設計上の性質として明記する |
 | bootsnap が解決した絶対パスで呼ばれるため、`name` が元の require 文字列と一致しない（例: `slowgem/other` が `.../slowgem/other.rb` で届く） | span の同一性と gem への帰属には `feature`（`$LOADED_FEATURES.last`）を使い、`name` は表示用に留める |
 | `alias_method` を使わずに `define_method :require` で上書きするライブラリがあると、フックが外れる | まれ。at_exit で「require が1件も記録されていないのに `$LOADED_FEATURES` が増えた」ことを検出して `probe_warnings` に載せる |
 | `Kernel` に private メソッド名が3つ増える | §6.3 で扱う |
@@ -87,7 +87,7 @@ end
 
 ### 1.4 `require_relative` も prepend しない
 
-`require_relative` は誰も alias しないので、spike では Kernel に prepend していた。しかし、**`Kernel.prepend` は中身が空でも bootsnap の load path cache が有効なときに boot を遅くする**（付録 A-3: 空のモジュールで +24〜60ms。load path cache を無効にすると差は消える）。原因は特定していない。Kernel の origin が作られることで、bootsnap の Ruby 実装の require がメソッドを探索する経路が遅くなると推測している。
+`require_relative` は誰も alias しないので、spike では Kernel に prepend していた。しかし、**`Kernel.prepend` は中身が空でも bootsnap の load path cache が有効なときに boot を遅くする**（付録 A-3: 空のモジュールで +24〜60ms。load path cache を無効にすると差は消える）。原因は特定していない。Kernel の origin が作られることで、bootsnap の Ruby 実装の require がメソッドを探索する処理が遅くなると推測している。
 
 対策として、`require_relative` も Kernel に直接定義し直す（`__hayate_require_relative` に退避するだけで、元のメソッドは呼ばない）。この変更で、プロトタイプのオーバーヘッドは +12.0% から +1.4% に下がった。
 
@@ -117,9 +117,9 @@ end
 
 - H9b について: Finisher の `eager_load!` initializer は Zeitwerk の後で `config.eager_load_namespaces.each(&:eager_load!)` と `Rails.eager_load!` を呼ぶ。`TZInfo.eager_load!`（zoneinfo を全部読む。macOS で約 115ms）のように require を伴わない処理があり、H9 だけでは initializer 本体の時間に埋もれていた。`ActiveSupport::Autoload#eager_load!` や Engine の delegate では定義位置が共通の場所になるため、持ち主の判定には定数の定義元を優先する。
 
-- H4〜H9 は Kernel ではないので prepend で問題ない。後からこれらのメソッドを alias chain するライブラリは見つかっていない。万一あっても、複製された prepend 本体の `super` が失敗するのはそのライブラリの経路だけである。リスクとして §9 に記載する。
+- H4〜H9 は Kernel ではないので prepend で問題ない。後からこれらのメソッドを alias chain するライブラリは見つかっていない。万一あっても、複製された prepend 本体の `super` が失敗するのはそのライブラリの呼び出しだけである。リスクとして §9 に記載する。
 - H7 について: `ActiveSupport` には `LazyLoadHooks` が extend 済みだが、Ruby 3.0 以降は後から prepend しても反映される（プロトタイプで on_load span が 40 件取れた）。
-- H8 は、「どの require や initializer が `:active_record` などの load hook を早期に発火させたか」を親の span から特定するためのグループ化に使う。H7 と H8 は別の種類の span（`K_ONLOAD` と `K_HOOKS`）として記録する。
+- H8 は「どの require や initializer が `:active_record` などの load hook を早期に発火させたか」を親の span から特定するためのグループ化に使う。H7 と H8 は別の種類の span（`K_ONLOAD` と `K_HOOKS`）として記録する。
 - H9 について: Rails 8.1 は `Zeitwerk::Loader.eager_load_all` を呼び、7.x は `Rails.autoloaders.each(&:eager_load)` などを呼ぶ。どちらも `Loader#eager_load` に集約される。Zeitwerk 2.5 では `eager_load` が Loader の本体にあり、2.6 以降は `Loader::EagerLoad` にある。Loader に prepend すれば両方を捕捉できる。
 - Rails の `eager_load!` initializer には、Zeitwerk 以外の `config.eager_load_namespaces.each(&:eager_load!)`（ActiveSupport::Autoload）も含まれる。この部分は initializer span の子の require として見える。プロトタイプでは、tzinfo のゾーン読み込みが initializer の self time 151ms として現れた（サンプリングで確認）。
 
@@ -145,13 +145,13 @@ PENDING = {
 - probe の読み込み時にも一度だけ `defined?` で確認し、すでに定義済みのものは即座にインストールする。probe が後から読み込まれた場合や、`--no-r` の診断モードに備えるためである。
 - 末尾一致の判定は、require 1回あたり最大5回の `String#end_with?` で済む。TracePoint の `:class` も検討したが、すべてのクラス本体で発火するため不採用とした。
 
-### 2.3 インストールの順序と、他の上書きとの関係（Rails 8.1 / Ruby 4.0 の実測）
+### 2.3 インストールの順序と、他の上書きとの関係（Rails 8.1 / Ruby 4.0 で計測）
 
 | 時点 | 起きること | フックの状態 |
 |---|---|---|
 | ruby 起動 | `gem_prelude` が RubyGems（`Kernel#require` の上書きと `gem_original_require` の alias）、did_you_mean、error_highlight、syntax_suggest を読み込む | - |
 | `-r probe` | H1〜H3（と H10）をインストールし、at_exit を登録する。probe 自身の読み込みは記録しない | instance: probe → RubyGems → builtin / singleton: probe → builtin |
-| `RUBYOPT` の `-r` | **コマンドラインの `-r` より後に処理される**（実測）。利用者が `RUBYOPT=-rbundler/setup` を設定していても記録できる | - |
+| `RUBYOPT` の `-r` | **コマンドラインの `-r` より後に処理される**（計測で確認）。利用者が `RUBYOPT=-rbundler/setup` を設定していても記録できる | - |
 | `config/boot.rb` → `bundler/setup` | `bundler/runtime.rb` で H4。Bundler.setup → `replace_require`（Ruby 3.3 以上） | bundled_gems → probe |
 | `bootsnap/setup` | load path cache が `Kernel#require` を alias chain する。compile cache は iseq の読み込みに介入するだけなので無関係 | bootsnap → bundled_gems → probe |
 | `require "rails"` | `lazy_load_hooks.rb` で H7・H8、Zeitwerk の core_ext で instance と singleton を alias chain、`zeitwerk/loader.rb` で H9、`rails/initializable.rb` で H6、`rails/application.rb` で H5 | instance: Zeitwerk → bootsnap → bundled_gems → `Kernel.no_warning_require`（singleton の probe）→ builtin |
@@ -173,28 +173,28 @@ boot の終了時刻は at_exit の時刻ではなく、**main スレッドの�
 
 ### 3.2 例外
 
-- 例外で抜けた span には `res = :raised` を記録し、**span 自体は残す**。boot 失敗時には、raised の span をたどれば失敗した経路（どの initializer の、どの require か）が分かる。
+- 例外で抜けた span には `res = :raised` を記録し、**span 自体は残す**。boot 失敗時には、raised の span をたどれば失敗した呼び出し（どの initializer の、どの require か）が分かる。
 - 例外を握りつぶした上位の span は通常どおり閉じる（プロトタイプの edge テストで確認済み）。
 - 例外オブジェクトは保持しない（メモリ節約のため）。boot 全体の失敗は at_exit の `$!` から取得する。
 
 ### 3.3 マルチスレッド
 
-- スタックは**スレッドごと**に持つ。main スレッドでは定数 `MAIN_STACK` を直接使い（高速な経路）、それ以外のスレッドでは `Thread#thread_variable_get(:__hayate_stack)` を使う。`Thread.current[]` は fiber ローカルなので使わない。
+- スタックは**スレッドごと**に持つ。main スレッドでは定数 `MAIN_STACK` を直接使い（高速な方法）、それ以外のスレッドでは `Thread#thread_variable_get(:__hayate_stack)` を使う。`Thread.current[]` は fiber ローカルなので使わない。
 - 記録配列 `EV` はメインスレッドだけが使う。main 以外のスレッドは、スレッドごとのバッファ（`Thread#thread_variable_get(:__hayate_buf)`）に記録する。バッファの一覧 `BUFFERS` は `BUF_LOCK` で保護して登録する。書き出し時に `EV` の後ろへ各バッファを結合し、親の添字はバッファ内の位置からずらす（`Hayate::Probe.events`）。1 span ぶんの追記は**1回の `Array#push(複数の引数)`** で行う（バッファ内でも同じ）。
 - span には `tid` を記録する（main は 0、それ以外は `Thread#object_id`）。親では main 以外の span を「background threads」という別の根として表示し、boot 全体の合計（クリティカルパス）には含めない。
-- 注意: 時間はすべて wall clock なので、並行するスレッドが GVL を奪った時間も main の span に入る。require の loading lock を待つ時間も含まれる。親は、スレッドの span が1件でもあれば「並行実行あり、時間の帰属は近似」と注記する。
+- 注意: 時間はすべて wall clock なので、並行するスレッドが GVL を奪った時間も main の span に入る。require の loading lock を待つ時間も含まれる。親はスレッドの span が1件でもあれば「並行実行あり、時間の帰属は近似」と注記する。
 - Fiber の中で require された場合は、そのスレッドのスタックに積まれる。Fiber を切り替えながら require が交互に進むと入れ子の関係が崩れるが、boot 中にはまず起きないので許容する。
 
 ### 3.4 require_relative と require の二重記録
 
 - H3 は `gem_original_require` に直接委譲し、H1 を通らない。そのため require_relative が H1 で二重に記録されることはない。
-- alias chain の交差により、将来 probe のラッパーが2回通る経路ができた場合の防御として、probe 側でガードする。「直前に開いた span が require 系で、まだ子が無く（`EV.size == parent + W`）、`name` が同一オブジェクトである」ときは記録せずに素通りする。これは参照の比較だけなので安い。
+- alias chain の交差により、将来 probe のラッパーが2回通る呼び出しができた場合の防御として、probe 側でガードする。「直前に開いた span が require 系で、まだ子が無く（`EV.size == parent + W`）、`name` が同一オブジェクトである」ときは記録せずに通す。これは参照の比較だけなので安い。
 - 親側でも正規化する。require 系の span が**唯一の子**として同じ feature の require 系の span を持つ場合は、2つを1つにまとめる。bootsnap などが名前を書き換えて同一オブジェクトの判定をすり抜けたときの保険である。
 
 ### 3.5 `false` を返した require
 
-- **span としては残さない。** 閉じる時点で結果が `false` なら、自分の分のスロットを取り除き（直前に追記した span なので `EV.pop(W)`）、`FALSE_COUNT` と `FALSE_TIME` に加算する。実測では 907 件で合計 5.1ms（boot の 0.7%）、最大 0.86ms だった。span 数は約4割減る。
-- `false` を返す require は子を持たない。循環 require が途中で戻るときも子は無い。そのため取り除いても木は壊れない。
+- **span としては残さない。** 閉じる時点で結果が `false` なら、自分の分のスロットを取り除き（直前に追記した span なので `EV.pop(W)`）、`FALSE_COUNT` と `FALSE_TIME` に加算する。計測では 907 件で合計 5.1ms（boot の 0.7%）、最大 0.86ms だった。span 数は約4割減る。
+- `false` を返す require は子を持たない。循環 require が途中で戻るときも子は無い。そのため取り除いても木は崩れない。
 - 時間は自然に親の self time に入る。合計値は診断用に出力する（「`false` を返す require が多い」というルールの材料になる）。
 - 例外で抜けた require は 3.2 のとおり残す。
 
@@ -220,11 +220,11 @@ boot の終了時刻は at_exit の時刻ではなく、**main スレッドの�
 |---|---|---|
 | span の開始と終了 | `Process.clock_gettime(Process::CLOCK_MONOTONIC)`（Float 秒） | 単調増加。64bit では Float が flonum になるので割り当てが発生しない |
 | CPU 時間（粗い span のみ） | `CLOCK_THREAD_CPUTIME_ID` | initializer の「外部 I/O 待ち」を検出するため（wall と cpu の差） |
-| Ruby VM の起動時間の推定 | 親の spawn 直前と probe の先頭で `CLOCK_REALTIME`。補助として probe の先頭で `CLOCK_PROCESS_CPUTIME_ID` | 2つのプロセスにまたがるため realtime を使う。実測で realtime の差が 28.2ms、CPU 時間が 26.9ms と整合した |
+| Ruby VM の起動時間の推定 | 親の spawn 直前と probe の先頭で `CLOCK_REALTIME`。補助として probe の先頭で `CLOCK_PROCESS_CPUTIME_ID` | 2つのプロセスにまたがるため realtime を使う。計測で realtime の差が 28.2ms、CPU 時間が 26.9ms と整合した |
 | GC | `GC.stat(:time)` と `GC.count` を probe の開始時と終了時に取る | GC チューニングのルールの材料（span ごとには取らない） |
 
 - CPU 時間は、initializer、on_load、eager_load、phase の span（数百件）でだけ取る。require の span（数千件）では取らない。開始値はメソッドのローカル変数に持ち、閉じるときに差分だけを記録する。
-- 親から子へは `HAYATE_SPAWN_AT`（realtime の Float 文字列）を渡す。VM の起動時間は `t0_real - spawn_at` で推定する。親は、同じ ruby で `ruby -e ''` を数回実行した値も参考として表示する。
+- 親から子へは `HAYATE_SPAWN_AT`（realtime の Float 文字列）を渡す。VM の起動時間は `t0_real - spawn_at` で推定する。親は同じ ruby で `ruby -e ''` を数回実行した値も参考として表示する。
 
 ### 4.2 記録形式（フラットな配列）
 
@@ -252,10 +252,10 @@ EV = []   # 1 span = W(=8) スロット
 ### 5.1 出力先
 
 - **環境変数 `HAYATE_PROBE_OUT` で渡したファイルパスに書き出す。** 親は `Dir.mktmpdir` の中に run ごとのファイル名を用意する。
-  - pipe（fd 3 などの継承）は採用しない。アプリが fd を閉じたりデーモン化したりすると壊れやすく、親が読み出しを並行させる必要もあるため。
-  - stdout と stderr はアプリのログと混ざるので使わない。親はこれらを上限付きで捕捉し、失敗時の表示にだけ使う。
-- 書き出しは `"#{OUT}.tmp"` に書いてから `File.rename` する。途中で kill されても、壊れた JSON を親が読まないようにするためである。
-- probe は起動時に `ENV.delete("HAYATE_PROBE_OUT")` と `ENV.delete("HAYATE_SPAWN_AT")` を実行し、値は定数に保持する。子孫のプロセスへの漏れと、アプリから見える副作用を最小にするためである。
+  - pipe（fd 3 などの継承）は採用しない。アプリが fd を閉じたりデーモン化したりすると失敗しやすく、親が読み出しを並行させる必要もあるため。
+  - stdout と stderr はアプリのログと一緒になるので使わない。親はこれらを上限付きで捕捉し、失敗時の表示にだけ使う。
+- 書き出しは `"#{OUT}.tmp"` に書いてから `File.rename` する。途中で kill されても、不完全な JSON を親が読まないようにするためである。
+- probe は起動時に `ENV.delete("HAYATE_PROBE_OUT")` と `ENV.delete("HAYATE_SPAWN_AT")` を実行し、値は定数に保持する。子孫のプロセスへの引き継ぎと、アプリから見える副作用を最小にするためである。
 - **pid のガード**: probe の読み込み時の `Process.pid` を保持し、at_exit で一致したときだけ書く。boot 中に fork した子（spring、preload、`Process.fork` を使う initializer など）が結果を上書きしないようにするためである（edge テストで確認済み）。
 
 ### 5.2 at_exit と部分結果
@@ -268,7 +268,7 @@ EV = []   # 1 span = W(=8) スロット
 | SIGTERM（親のタイムアウトによる1回目の kill） | 実行される（SignalException） | `"error"`。開いていた span は ensure で raised として閉じるので、**どこで止まっていたか**が分かる |
 | `exit!`、SIGKILL、segfault、`exec` | 実行されない | ファイルが無い。親は「結果なし」として扱い、stderr の末尾を表示する |
 
-- 部分結果は**返す**。親は、失敗した run を除外して続行する（中央値の集計から外し、残りの run で計測を続ける）。診断用に「失敗した位置」（raised の span の連なりと、未完了の span）を表示する。**全 run が失敗した場合のみエラー**とし、1回目の部分結果とエラーを表示して終了コードを非0にする。
+- 部分結果は**返す**。親は失敗した run を除外して続行する（中央値の集計から外し、残りの run で計測を続ける）。診断用に「失敗した位置」（raised の span の連なりと、未完了の span）を表示する。**全 run が失敗した場合のみエラー**とし、1回目の部分結果とエラーを表示して終了コードを非0にする。
 - 未完了の span（`t_end` が nil）は、親が `t_exit` で閉じて `meta.incomplete` を付ける。
 
 ### 5.3 `exit!` への対応（任意、P2）
@@ -282,7 +282,7 @@ EV = []   # 1 span = W(=8) スロット
   1. Bundler の制約下では、Gemfile.lock が別のバージョンの json を指定していることがある。activate による衝突や警告のおそれがある。
   2. boot が json の読み込みの途中で失敗していると、json が半端な状態になっている。
   3. ActiveSupport は `to_json` の系統を書き換えるので、生成結果が環境によって変わりうる。
-  4. require すれば、その時間とファイルが計測の対象に混ざる（事実5）。書き出し前に記録を止めれば避けられるが、上の3点は残る。
+  4. require すれば、その時間とファイルが計測の対象に含まれる（事実5）。書き出し前に記録を止めれば避けられるが、上の3点は残る。
 - 扱う型は String、Symbol、Integer、Float、nil、true/false、Array、Hash に限る。String は `scrub` した後、`"`、`\`、制御文字だけをエスケープする。Float は時刻を整数 µs にするので基本的に出てこない。それ以外の型は `to_s` する。
 - 書き出しの前に `@on = false` として記録を止める。エンコーダの中で autoload などが起きても記録されない。
 
@@ -305,7 +305,7 @@ EV = []   # 1 span = W(=8) スロット
 }
 ```
 
-- `specs` は at_exit 時点の `Gem.loaded_specs` から作る（名前 → [version, full_gem_path, extension_dir]）。gem への帰属は親で行う。照合は最長接頭辞で、`full_gem_path` と `extension_dir` の両方を見る。`Rails.root` 配下の path gem（`vendor/slowgem` など）は、最長一致の規則で app ではなく gem になる。どの gem にも一致せず `libdir` 配下なら stdlib とする。macOS の `/tmp` → `/private/tmp` などは、親が `File.realpath` をディレクトリ単位でキャッシュして正規化する。
+- `specs` は at_exit 時点の `Gem.loaded_specs` から作る（名前 → [version, full_gem_path, extension_dir]）。gem への帰属は親で行う。比較は最長接頭辞で、`full_gem_path` と `extension_dir` の両方を見る。`Rails.root` 配下の path gem（`vendor/slowgem` など）は最長一致の規則で app ではなく gem になる。どの gem にも一致せず `libdir` 配下なら stdlib とする。macOS の `/tmp` → `/private/tmp` などは親が `File.realpath` をディレクトリ単位でキャッシュして正規化する。
 - `pending_hooks` に残ったものは、Rails 以外のアプリなど、対象のファイルが読み込まれなかったことを表す。
 
 ---
@@ -386,7 +386,7 @@ at_exit { Hayate::Probe.write! }
 Hayate::Probe::INSTALLED = true
 ```
 
-- **ホットパスを inline 化する理由**: プロトタイプのブロック版 `span { }` は、利用者のバックトレースに require 1回あたり3フレーム（`Kernel#require`、`block in Kernel#require`、`Hayate::Probe.span`）を追加する。enter と leave の形にすれば1フレームで済み、メソッド呼び出しとブロックの生成も減る。bundled_gems の `uplevel` 計算や ActiveSupport::Deprecation が `caller` から呼び出し元を推定する処理への影響も小さくなる。
+- **ホットパスを inline 化する理由**: プロトタイプのブロック版 `span { }` は利用者のバックトレースに require 1回あたり3フレーム（`Kernel#require`、`block in Kernel#require`、`Hayate::Probe.span`）を追加する。enter と leave の形にすれば1フレームで済み、メソッド呼び出しとブロックの生成も減る。bundled_gems の `uplevel` 計算や ActiveSupport::Deprecation が `caller` から呼び出し元を推定する処理への影響も小さくなる。
 
 ### 6.3 名前空間の汚染を最小にする方針
 
@@ -411,7 +411,7 @@ Hayate::Probe::INSTALLED = true
 | `RUBYOPT` の継承 | probe は `RUBYOPT` を使わずに `-r` で読み込まれるので、子孫プロセスには載らない。利用者の `RUBYOPT`（`with_unbundled_env` が復元する元の値）は尊重し、その `-r` は probe より後に処理されるので計測できる。`HAYATE_*` は probe が削除する。boot 中に `exec` で別の ruby に置き換わる構成（Bundler の再 exec など）では結果が出ない。親はこれを「結果なし」として検出し、案内を出す |
 | fork | §5.1 の pid ガードで対応する |
 | Rails 以外の Bundler アプリ | probe はフレームワークに依存しない。Rails のフックはインストールされずに `pending_hooks` に残るだけで、require と Bundler.require の span は取れる。Runner 側で起動コマンドを `-e "require 'bundler/setup'; Bundler.require"` または `--entry FILE` に切り替えられるようにする |
-| `Kernel.require` を直接呼ぶコード | singleton の alias chain で捕捉できる（Bundler.require もこの経路を通る） |
+| `Kernel.require` を直接呼ぶコード | singleton の alias chain で捕捉できる（Bundler.require もこの呼び出しを通る） |
 | `autoload`（Zeitwerk 以外も含む） | CRuby の autoload は、`Kernel#require` が再定義されているとそのメソッドを呼ぶので H1 を通る（事実1） |
 | Pathname などの非 String の引数 | 参照をそのまま保持し、書き出し時に `to_s` する |
 | シンボリックリンクを含むディレクトリでの `require_relative` | `caller_locations(...).absolute_path` が realpath を返すので、ネイティブの解決と一致する（Ruby 4.0 で確認。`spike/04_probe/edge/symlink_rr.sh`）。**3.2〜3.4 では未検証** |
@@ -435,7 +435,7 @@ Hayate::Probe::INSTALLED = true
   - slowgem の self time ≈ 100ms、inner ≈ 50ms（require_relative として1件だけ）、other ≈ 30ms
   - on_load(action_controller) ≈ 40ms で、持ち主は slowgem
   - `spike.rb` の load span ≥ 19ms、かつそれを含む initializer（`load_config_initializers`）の inclusive 時間 ≥ 19ms（Rails は設定ファイルを `load` で読むため、その時間は子の load span に入り、initializer の self time には現れない）
-  - プロトタイプの実測は slowgem 105.3 / 55.2 / 35.6ms、on_load 45.0ms
+  - プロトタイプで計測した値は slowgem 105.3 / 55.2 / 35.6ms、on_load 45.0ms
 - 帰属: slowgem の span は Rails.root 配下にあるが、gem として帰属する。
 - boot を壊さないこと: probe の有無で `Rails.application.initialized?`、bundled_gems の警告の文言、`$LOADED_FEATURES` の集合が一致すること。
 
@@ -472,12 +472,12 @@ Hayate::Probe::INSTALLED = true
 
 ## 9. 未解決のリスクと、実装時に検証すること
 
-1. **Ruby 3.2〜3.4 での動作は未検証。** 今回の環境には Ruby 4.0 しか無い。alias chain は古い挙動にしか依存していないので壊れにくいと考えるが、3.3 の `replace_require` の実装差、Zeitwerk 2.6 の core_ext、`caller_locations` の `absolute_path` が realpath を返すかは、§8.4 のマトリクスで最初に確認する。
+1. **Ruby 3.2〜3.4 での動作は未検証。** 今回の環境には Ruby 4.0 しか無い。alias chain は古い挙動にしか依存していないので失敗しにくいと考えるが、3.3 の `replace_require` の実装差、Zeitwerk 2.6 の core_ext、`caller_locations` の `absolute_path` が realpath を返すかは、§8.4 のマトリクスで最初に確認する。
 2. **`Kernel.prepend` が遅くなる原因は特定していない。** 「prepend しない」で回避したが、H4〜H9 の prepend（Kernel 以外）が同じ性質を持たないかは計測で確認する。プロトタイプ全体では +1.4% だったので、現状は問題ない。
-3. **`define_method :require` で（alias せずに）上書きするライブラリ。** フックが外れて計測が欠ける。boot は壊れない。§1.3 の検出ロジックで警告を出す。実在するかは gem コーパス（上位 1000 gem）を grep して調べる。
+3. **`define_method :require` で（alias せずに）上書きするライブラリ。** フックが外れて計測が欠ける。boot は失敗しない。§1.3 の検出ロジックで警告を出す。実在するかは gem コーパス（上位 1000 gem）を grep して調べる。
 4. **H4〜H9 の対象メソッドを alias chain するライブラリ。** prepend 本体が複製されて `super` が失敗する、という同じ種類の問題が起こりうる。現時点では見つかっていないが、3 と同じく調査する。保険として、Rails 関連のフックだけを無効にする環境変数（`HAYATE_PROBE_HOOKS=require`）を用意する。
 5. **Rails のメソッドシグネチャの変化。** `execute_hook(name, base, options, block)` と `Initializer#run(*args)` は 7.0〜8.1 で同じことを 8.1 のソースで確認したが、7.0 のソースではまだ確認していない。フックの引数を `(...)` で受けて、内部の参照を最小にすることでも防ぐ。
-6. **事実2の `Bundler::GemNotFound` の根本原因は未特定。** 本設計では `gem_original_require` に委譲するので発生しないが、`--disable-gems` で後から RubyGems が読み込まれる経路などで再発しないか、8.2 の4番で確認する。
+6. **事実2の `Bundler::GemNotFound` の根本原因は未特定。** 本設計では `gem_original_require` に委譲するので発生しないが、`--disable-gems` で後から RubyGems が読み込まれる方法などで再発しないか、8.2 の4番で確認する。
 7. **時間の帰属の限界。** bootsnap と Zeitwerk のラッパー処理、Zeitwerk の `on_load` コールバック、スレッドの並行実行の時間は、親 span の self time に入る。レポートで注記する。
 8. **大規模アプリでのペイロードとメモリ。** require が数万件の場合の JSON サイズと at_exit の時間を測り、必要なら §4.2 の文字列表方式（v2）に移る。
 9. **`exit!` と `exec` を使う構成では結果が出ない。** P2 の H10 で `exit!` は救えるが、`exec` には対応できない。親のエラーメッセージで案内する。
@@ -493,7 +493,7 @@ Hayate::Probe::INSTALLED = true
 | instance | `no superclass method` | 成功 |
 | singleton | 無限に再帰 | 成功 |
 
-callee ガードはこの最小再現では成功するが、実アプリでは A-2 のとおり下位のラッパーを素通りする。
+callee ガードはこの最小再現では成功するが、実アプリでは A-2 のとおり下位のラッパーを呼ばれない。
 
 ### A-2. 実アプリでの方式比較（`spike/04_alias/run_variants.sh`、fixture は `setup_app.sh`）
 

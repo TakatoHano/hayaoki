@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 # Spike 1: require 直後の $LOADED_FEATURES.last で「今 require したファイル」を特定できるか
-#   + どの読み込み経路が Kernel#require の prepend で捕捉できるか
+#   + どの読み込み方法が Kernel#require の prepend で捕捉できるか
 require "tmpdir"
 require "fileutils"
 

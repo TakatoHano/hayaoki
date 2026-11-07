@@ -3,7 +3,7 @@
 require "test_helper"
 
 # 既知の sleep を持つダミー gem (fixtures/slowgem) と Rails の模造 (fixtures/fake_rails) で、
-# 時間の帰属を検証する。期待値は sleep の指定値ではなくダミー内部の実測値 (macOS では sleep が平均 +4ms 延びる)。
+# 時間の帰属を検証する。期待値は sleep の指定値ではなくダミー内部で測った値 (macOS では sleep が平均 +4ms 延びる)。
 class ProbeAccuracyTest < Minitest::Test
   include ProbeHelper
 
@@ -64,7 +64,7 @@ class ProbeAccuracyTest < Minitest::Test
   def test_slowgem_inclusive_time_is_sum_of_its_parts
     s = @rep.feature("/slowgem.rb").first
     total = @measured.values_at(:slowgem, :inner, :other).sum
-    # 内側の require 自体 (ファイル探索と読み込み) のぶんだけ実測値の合計を上回る
+    # 内側の require 自体 (ファイル探索と読み込み) のぶんだけ測った値の合計を上回る
     assert_operator s.dur_ms, :>=, total
     assert_operator s.dur_ms, :<, total + 10
   end

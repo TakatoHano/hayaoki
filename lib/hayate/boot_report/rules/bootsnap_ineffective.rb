@@ -5,9 +5,9 @@ require_relative "base"
 module Hayate
   module BootReport
     module Rules
-      # bootsnap が無い / 効いていない可能性。
+      # bootsnap が無い / 有効になっていない可能性。
       class BootsnapIneffective < Base
-        MIN_DIFF_RATIO = 0.05 # cold と warm の差がこれ未満なら効いていないとみなす
+        MIN_DIFF_RATIO = 0.05 # cold と warm の差がこれ未満なら有効になっていないとみなす
         CACHE_WARNING = /BOOTSNAP_CACHE_DIR was not used/
 
         def call

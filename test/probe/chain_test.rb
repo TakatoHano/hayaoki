@@ -2,7 +2,7 @@
 
 require "test_helper"
 
-# alias chain の共存: 後から別のライブラリが require を alias_method で退避・上書きしても boot が壊れず、
+# alias chain の共存: 後から別のライブラリが require を alias_method で退避・上書きしても boot が失敗せず、
 # どのラッパーも期待どおり呼ばれ、probe は require を1回だけ記録する (§8.2 の5通り)
 class ProbeChainTest < Minitest::Test
   include ProbeHelper
@@ -11,7 +11,7 @@ class ProbeChainTest < Minitest::Test
   PROBE_Q = PROBE.dump
 
   # chain_a は Kernel#require、chain_b は Kernel.require で読む。
-  # bootsnap 相当は instance のみなので、singleton 経路には現れない (設計書 A-4)。
+  # bootsnap 相当は instance のみなので、singleton の呼び出しには現れない (設計書 A-4)。
   EXPECTED = {
     %w[bundled_gems chain_a] => 1, %w[bootsnap chain_a] => 1, %w[zeitwerk chain_a] => 1,
     %w[bundled_gems chain_b] => 1, %w[zeitwerk chain_b] => 1,

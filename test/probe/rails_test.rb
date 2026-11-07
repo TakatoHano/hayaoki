@@ -70,7 +70,7 @@ class ProbeRailsTest < Minitest::Test
     slowgem = rep.feature("/slowgem/lib/slowgem.rb").first
     refute_nil slowgem
     assert_operator slowgem.self_ms, :>=, 99
-    # 子 (inner 50ms + other 30ms の sleep) が親の self に混ざっていないこと。時間のばらつきに依存しない形で確認する
+    # 子 (inner 50ms + other 30ms の sleep) が親の self に含まれていないこと。時間のばらつきに依存しない形で確認する
     assert_operator slowgem.children.sum(&:dur_ms), :>=, 79
     # macOS の CI ランナーは sleep が大きく延びる (100ms が 200ms 超) ので、絶対値の上限はそこでは見ない
     unless ENV["CI"] && RUBY_PLATFORM.include?("darwin")

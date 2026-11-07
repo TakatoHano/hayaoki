@@ -39,7 +39,7 @@ unless defined?(HayateProbe)
         end
       end
 
-      # super だと基準パスが壊れるため、呼び出し元から絶対パスを解決して委譲する。
+      # super だと基準パスが正しく解決されないため、呼び出し元から絶対パスを解決して委譲する。
       # 既定は gem_original_require (RubyGems の require を経由せず本来の require_relative と同等)。
       # PROBE_RR=require で require 委譲版 (RubyGems 経由) に切替可能。
       def require_relative(name)

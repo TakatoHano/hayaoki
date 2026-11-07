@@ -2,7 +2,7 @@
 
 require "test_helper"
 
-# 複数スレッドが同時に require してもスレッドごとの span が壊れないこと
+# 複数スレッドが同時に require してもスレッドごとの span が不正にならないこと
 class ProbeThreadTest < Minitest::Test
   include ProbeHelper
 

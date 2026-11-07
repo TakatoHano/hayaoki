@@ -1,0 +1,18 @@
+# AI らしい日本語の語彙チェックの設定。tools/ai-words/check.mjs が読む。
+#
+# preset のサブルールを有効にするときはオプションのオブジェクトを渡すこと。
+# `no-short-topic-comma: true` と書いても有効にならず、しかもエラーにならない。
+# preset 名やルール名を書き間違えても読み込まれるルールが 0 件になるだけで通るので、
+# check.mjs が読み込んだルールの数を確かめる。
+rules:
+  preset-ai-words-ja:
+    # 語彙そのものを見る。形態素の basic_form で一致するので活用形を並べる必要がない。
+    no-ai-words: true
+    # 「結論は、〜」のように主題を短く示しただけの読点。preset の既定は無効なので有効にする
+    no-short-topic-comma:
+      severity: error
+
+filters:
+  # <!-- textlint-disable --> / <!-- textlint-enable --> による抑止 (Markdown のみ)。
+  # Markdown 以外のファイルでは行単位の `ai-words-allow=<語>` を使う (check.mjs)。
+  comments: true
