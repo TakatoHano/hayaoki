@@ -20,6 +20,23 @@ class ProbeEdgeTest < Minitest::Test
     assert_equal 0, leaf.tid
   end
 
+  # Redmine は lib/plugins/*/init.rb を eval(File.read(f), binding, f) で読み、その中で require_relative する
+  def test_require_relative_inside_eval_with_file_uses_that_file
+    r = run_probe('eval(%q{require_relative "t_leaf"}, binding, File.expand_path("init.rb")); ' \
+                  'eval(%q{require_relative "t_main"}, binding, "init.rb")')
+    rep = r.report
+    assert_equal "ok", rep["status"], rep["error"].inspect
+    assert_equal 1, rep.feature("t_leaf.rb").size
+    assert_equal 1, rep.feature("t_main.rb").size
+  end
+
+  def test_require_relative_inside_eval_without_file_fails_like_native
+    r = run_probe('begin; eval(%q{require_relative "t_leaf"}); rescue LoadError => e; puts e.message; end')
+    assert_equal "ok", r.report["status"]
+    assert_includes r.out, "cannot infer basepath"
+    assert_empty r.report.feature("t_leaf.rb")
+  end
+
   def test_span_raised_inside_rescue_is_kept_as_raised
     r = run_probe('begin; require "./t_raise"; rescue => e; end; require "./t_leaf"')
     rep = r.report

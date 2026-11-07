@@ -448,7 +448,10 @@ end
   def require_relative(path)
     loc = caller_locations(1, 1)&.first
     base = loc&.absolute_path
-    base ||= File.join(Dir.pwd, "-e") if loc && loc.path == "-e" # ネイティブ同様、-e では cwd 基準
+    # eval(code, binding, file) で実行されたコードは absolute_path が nil になる。ネイティブと同じく、渡された
+    # file を (相対ならカレントディレクトリ基準で) 使う。-e も同じ扱い。file を渡さない eval だけ失敗させる
+    # (Redmine は lib/plugins/*/init.rb をこの形で読む)
+    base ||= File.expand_path(loc.path) if loc&.path && !loc.path.start_with?("(eval")
     raise LoadError, "cannot infer basepath" unless base
     abs = File.expand_path(path, File.dirname(base))
     i = Hayate::Probe.enter(1, abs)
