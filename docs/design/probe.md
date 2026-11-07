@@ -107,8 +107,8 @@ end
 | H4 | `Bundler::Runtime#require` | prepend | `bundler/runtime.rb` の読み込み直後 | phase `bundler_require` | groups |
 | H5 | `Rails::Application#initialize!` | prepend | `rails/application.rb` の読み込み直後 | phase `initialize` | - |
 | H6 | `Rails::Initializable::Initializer#run` | prepend | `rails/initializable.rb` の読み込み直後 | initializer | name、`@context.class.name`、`block.source_location` |
-| H7 | `ActiveSupport::LazyLoadHooks#execute_hook` | prepend | `active_support/lazy_load_hooks.rb` の読み込み直後 | on_load | フック名、`block.source_location` |
-| H8 | `ActiveSupport::LazyLoadHooks#run_load_hooks` | prepend | H7 と同時 | on_load（`meta.event`） | フック名、base |
+| H7 | `ActiveSupport::LazyLoadHooks#execute_hook` | prepend | `active_support/lazy_load_hooks.rb` の読み込み直後 | on_load（`K_ONLOAD`） | フック名、`block.source_location` |
+| H8 | `ActiveSupport::LazyLoadHooks#run_load_hooks` | prepend | H7 と同時 | load_hooks（`K_HOOKS`） | フック名、base のクラス名 |
 | H9 | `Zeitwerk::Loader#eager_load` | prepend | `zeitwerk/loader.rb` の読み込み直後 | eager_load | `tag` |
 | H10 | `Kernel#exit!` / `Process.exit!` | alias chain | probe 読み込み時（任意。§5.3） | - | 書き出してから委譲 |
 
@@ -116,7 +116,7 @@ end
 
 - H4〜H9 は Kernel ではないので prepend で問題ない。後からこれらのメソッドを alias chain するライブラリは見つかっていない。万一あっても、複製された prepend 本体の `super` が失敗するのはそのライブラリの経路だけである。リスクとして §9 に記載する。
 - H7 について: `ActiveSupport` には `LazyLoadHooks` が extend 済みだが、Ruby 3.0 以降は後から prepend しても反映される（プロトタイプで on_load span が 40 件取れた）。
-- H8 は、「どの require や initializer が `:active_record` などの load hook を早期に発火させたか」を親の span から特定するためのグループ化に使う。
+- H8 は、「どの require や initializer が `:active_record` などの load hook を早期に発火させたか」を親の span から特定するためのグループ化に使う。H7 と H8 は別の種類の span（`K_ONLOAD` と `K_HOOKS`）として記録する。
 - H9 について: Rails 8.1 は `Zeitwerk::Loader.eager_load_all` を呼び、7.x は `Rails.autoloaders.each(&:eager_load)` などを呼ぶ。どちらも `Loader#eager_load` に集約される。Zeitwerk 2.5 では `eager_load` が Loader の本体にあり、2.6 以降は `Loader::EagerLoad` にある。Loader に prepend すれば両方を捕捉できる。
 - Rails の `eager_load!` initializer には、Zeitwerk 以外の `config.eager_load_namespaces.each(&:eager_load!)`（ActiveSupport::Autoload）も含まれる。この部分は initializer span の子の require として見える。プロトタイプでは、tzinfo のゾーン読み込みが initializer の self time 151ms として現れた（サンプリングで確認）。
 
@@ -177,7 +177,7 @@ boot の終了時刻は at_exit の時刻ではなく、**main スレッドの�
 ### 3.3 マルチスレッド
 
 - スタックは**スレッドごと**に持つ。main スレッドでは定数 `MAIN_STACK` を直接使い（高速な経路）、それ以外のスレッドでは `Thread#thread_variable_get(:__hayate_stack)` を使う。`Thread.current[]` は fiber ローカルなので使わない。
-- 記録配列は全スレッドで1本を共有する。1 span ぶんの追記は**1回の `Array#push(複数の引数)`** で行う。CRuby では GVL の下で原子的に実行される。
+- 記録配列 `EV` はメインスレッドだけが使う。main 以外のスレッドは、スレッドごとのバッファ（`Thread#thread_variable_get(:__hayate_buf)`）に記録する。バッファの一覧 `BUFFERS` は `BUF_LOCK` で保護して登録する。書き出し時に `EV` の後ろへ各バッファを結合し、親の添字はバッファ内の位置からずらす（`Hayate::Probe.events`）。1 span ぶんの追記は**1回の `Array#push(複数の引数)`** で行う（バッファ内でも同じ）。
 - span には `tid` を記録する（main は 0、それ以外は `Thread#object_id`）。親では main 以外の span を「background threads」という別の根として表示し、boot 全体の合計（クリティカルパス）には含めない。
 - 注意: 時間はすべて wall clock なので、並行するスレッドが GVL を奪った時間も main の span に入る。require の loading lock を待つ時間も含まれる。親は、スレッドの span が1件でもあれば「並行実行あり、時間の帰属は近似」と注記する。
 - Fiber の中で require された場合は、そのスレッドのスタックに積まれる。Fiber を切り替えながら require が交互に進むと入れ子の関係が崩れるが、boot 中にはまず起きないので許容する。
@@ -265,7 +265,7 @@ EV = []   # 1 span = W(=8) スロット
 | SIGTERM（親のタイムアウトによる1回目の kill） | 実行される（SignalException） | `"error"`。開いていた span は ensure で raised として閉じるので、**どこで止まっていたか**が分かる |
 | `exit!`、SIGKILL、segfault、`exec` | 実行されない | ファイルが無い。親は「結果なし」として扱い、stderr の末尾を表示する |
 
-- 部分結果は**返す**。親は、失敗した run を中央値の集計から除き、診断用に「失敗した位置」（raised の span の連なりと、未完了の span）を表示する。全 run が失敗した場合は、1回目の部分結果とエラーを表示して終了コードを非0にする。
+- 部分結果は**返す**。親は、失敗した run を除外して続行する（中央値の集計から外し、残りの run で計測を続ける）。診断用に「失敗した位置」（raised の span の連なりと、未完了の span）を表示する。**全 run が失敗した場合のみエラー**とし、1回目の部分結果とエラーを表示して終了コードを非0にする。
 - 未完了の span（`t_end` が nil）は、親が `t_exit` で閉じて `meta.incomplete` を付ける。
 
 ### 5.3 `exit!` への対応（任意、P2）
@@ -392,7 +392,7 @@ Hayate::Probe::INSTALLED = true
 | 定数 | `::Hayate` と `::Hayate::Probe` のみ。フック用のモジュールは `Hayate::Probe::*` の下に置く |
 | Kernel のメソッド | private の `__hayate_require`、`__hayate_load`、`__hayate_require_relative`（instance と singleton。`require_relative` は instance のみ）。名前は RubyGems の `gem_original_require` にならった |
 | prepend 先 | §2.1 の H4〜H9 だけ。追加するのは `super` を呼ぶだけの公開メソッドで、インスタンス変数は追加しない |
-| その他 | グローバル変数は使わない。スレッド変数は `:__hayate_stack` の1つだけ。環境変数は読み込み時に削除する |
+| その他 | グローバル変数は使わない。スレッド変数は `:__hayate_stack`（スタック）と `:__hayate_buf`（スレッドごとの記録バッファ）の2つ。環境変数は読み込み時に削除する |
 | 書き出し時に読む情報 | `Gem.loaded_specs` と `Rails.root` は `defined?` と `respond_to?` で確認してから読む。autoload を引き起こす参照（`Rails.application.config` など）は行わない |
 
 ---

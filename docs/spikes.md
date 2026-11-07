@@ -22,6 +22,10 @@ require が true を返した直後の `$LOADED_FEATURES.last` から、今読�
 - require_relative の相対パスは caller_locations で呼び出し元の絶対パスに解決してから委譲する。
 - 記録の重複が起きうるため、記録側で重複排除を行う前提とする。
 
+### 最終設計での扱い
+
+- require_relative は prepend せず Kernel に直接定義し直す。二重記録は probe.md §3.4 で扱う（§1.4）。
+
 ### スクリプト
 
 - spike/01_loaded_features.rb
@@ -58,6 +62,11 @@ bootsnap および Zeitwerk が有効な Rails アプリの起動を壊さず、
 - probe は `-r` で先に読み込むことを必須とする。
 - require_relative は gem_original_require に委譲する（落とし穴1への対策）。
 - Kernel.require は元メソッドを保存して bind_call で呼ぶ暫定対策を採る（落とし穴2への対策。中核設計で再検討する）。
+
+### 最終設計での扱い
+
+- Kernel への prepend はやめて alias chain にした（probe.md §1.3）。
+- bind_call の暫定策は廃止した。bootsnap と Zeitwerk の require ラッパーを素通りしてしまうためである（probe.md §1.2）。
 
 ### スクリプト
 
@@ -109,6 +118,10 @@ probe を有効にしたときの boot 時間増加は 5% 未満に収まるか�
 - require_relative は gem_original_require に委譲する。元メソッドがない場合は require にフォールバックする。
 - probe 自身は json 等を読み込まない。アプリの読み込み時間が計測から消えるのを防ぐためである。
 - 記録の書き出し時に json 等を遅延 require する。
+
+### 最終設計での扱い
+
+- JSON は自前のエンコーダで出力し、json は require しない（probe.md §5.4）。
 
 ### スクリプト
 
