@@ -32,9 +32,11 @@ jobs:
           - app: redmine
             image: redmine:7.0
             dir: /usr/src/redmine
-            # sqlite の database.yml を置いて migrate してから測る (initializer が DB を読む場合に備える)
+            # sqlite の database.yml を置いて migrate してから測る (initializer が DB を読む場合に備える)。
+            # Redmine の Gemfile は database.yml の adapter で gem が変わるので、bundle install し直す
             prep: >-
               printf "production:\n  adapter: sqlite3\n  database: db/production.sqlite3\n" > config/database.yml &&
+              (bundle install >/tmp/bundle.log 2>&1 || (tail -20 /tmp/bundle.log; exit 1)) &&
               bundle exec rake db:migrate >/tmp/migrate.log 2>&1 || (tail -20 /tmp/migrate.log; exit 1)
             env: >-
               -e RAILS_ENV=production -e SECRET_KEY_BASE=dummy-secret-key-base-for-measurement-only-0123456789
