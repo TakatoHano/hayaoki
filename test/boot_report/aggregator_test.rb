@@ -59,10 +59,12 @@ class BootReportAggregatorTest < Minitest::Test
     # foo: foo.rb (統合後の 1 span) 自身 = 180 - (40 ext + 20 foo-extra) は ext が foo なので
     # foo.rb self=180-40-20=120, ext=40, railtie の initializer self=250-200=50, on_load=80 => 290 us
     foo = gem_row(r, "foo")
-    assert_in_delta 0.120 + 0.040 + 0.080 + 0.050, foo["self_ms"]["median"], 1e-6
+    # initializer 本体の自己時間 (0.050) は gem に付けない (init_body_ms として別掲)
+    assert_in_delta 0.120 + 0.040 + 0.080, foo["self_ms"]["median"], 1e-6
+    refute foo.key?("initializer_ms")
+    assert_operator foo["initializer_count"]["median"], :>=, 1
     assert_in_delta 0.160, foo["require_ms"]["median"], 1e-6
     assert_in_delta 0.080, foo["on_load_ms"]["median"], 1e-6
-    assert_in_delta 0.050, foo["initializer_ms"]["median"], 1e-6
     assert_in_delta 0.020, gem_row(r, "foo-extra")["self_ms"]["median"], 1e-6, "foo-1.0 は foo-1.0-extra に前方一致しない"
     assert_in_delta 0.010, gem_row(r, "bar")["self_ms"]["median"], 1e-6, "最長一致: rails_root 配下の path gem は gem"
     assert_equal "app", gem_row(r, "app")["name"]
@@ -92,7 +94,11 @@ class BootReportAggregatorTest < Minitest::Test
     r = agg([run_payload])
     i = r.initializers.find { _1["name"] == "load_config_initializers" }
     assert_in_delta 0.250, i["inclusive_ms"]["median"], 1e-6
-    assert_in_delta 0.050, i["self_ms"]["median"], 1e-6
+    assert_in_delta 0.050, i["init_body_ms"]["median"], 1e-6
+    refute i.key?("self_ms")
+    full = r.app_initializer_times
+    assert_equal ["/app/config/initializers/spike.rb"], full["files"].map { _1["path"] }
+    assert_in_delta 0.200, full["files"][0]["inclusive_ms"]["median"], 1e-6
     assert_equal "foo", i["owner"]
     o = r.on_loads.find { _1["name"] == "action_controller" }
     assert_in_delta 0.080, o["inclusive_ms"]["median"], 1e-6

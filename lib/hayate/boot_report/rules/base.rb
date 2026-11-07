@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "../gemfile"
+
 module Hayate
   module BootReport
     # Report / RunResult は Hash のキーが String でも Symbol でも動くように、値の取り出しはこの補助を通す。
@@ -70,6 +72,13 @@ module Hayate
           File.file?(path) ? File.read(path) : nil
         rescue SystemCallError
           nil
+        end
+
+        # Gemfile を解析した { gem 名 => Gemfile::Entry }。Gemfile が無ければ nil。
+        def gemfile_entries
+          return @gemfile_entries if defined?(@gemfile_entries)
+          src = gemfile
+          @gemfile_entries = src && Hayate::BootReport::Gemfile.parse(src)
         end
       end
     end

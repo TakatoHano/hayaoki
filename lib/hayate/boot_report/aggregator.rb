@@ -50,6 +50,7 @@ module Hayate
           gems: gems(analyses),
           files: files(analyses),
           initializers: initializers(analyses),
+          app_initializer_times: app_initializer_times(analyses),
           on_loads: on_loads(analyses),
           false_require: {
             "count" => stat(analyses.map { |a| a[:false_count] }), "time_ms" => stat(analyses.map { |a| a[:false_ms] })
@@ -74,10 +75,10 @@ module Hayate
         a = {
           merged: merged, features: payload["features"], background_spans: spans.size - main.size,
           false_count: payload.dig("false_require", "count").to_i, false_ms: payload.dig("false_require", "time_us").to_i / 1000.0,
-          gems: Hash.new { |h, k| h[k] = { "self_ms" => 0.0, "require_ms" => 0.0, "on_load_ms" => 0.0, "initializer_ms" => 0.0, "category" => nil } },
+          gems: Hash.new { |h, k| h[k] = { "self_ms" => 0.0, "require_ms" => 0.0, "on_load_ms" => 0.0, "initializer_count" => 0, "category" => nil } },
           categories: Hash.new { |h, k| h[k] = { "self_ms" => 0.0 } },
           files: Hash.new { |h, k| h[k] = { "self_ms" => 0.0, "inclusive_ms" => 0.0, "owner" => nil, "category" => nil, "count" => 0 } },
-          initializers: Hash.new { |h, k| h[k] = { "inclusive_ms" => 0.0, "self_ms" => 0.0 } },
+          initializers: Hash.new { |h, k| h[k] = { "inclusive_ms" => 0.0, "init_body_ms" => 0.0 } },
           on_loads: Hash.new { |h, k| h[k] = { "inclusive_ms" => 0.0, "self_ms" => 0.0 } },
           phase: {}
         }
@@ -108,12 +109,16 @@ module Hayate
             e["owner"] = o.name
             e["category"] = o.category
           when K_INIT
-            add_owner(a, o, self_ms, "initializer_ms")
+            # initializer 本体の自己時間 (require や子に帰属できない分) は定義元 gem に付けず、init_body_ms として別掲する
             ctx = s.res.is_a?(Array) ? s.res[0] : nil
             e = a[:initializers][[s.name, ctx]]
             e["inclusive_ms"] += dur_ms
-            e["self_ms"] += self_ms
+            e["init_body_ms"] += self_ms
             e["owner"] = o.name
+            # 時間は付けないが、initializer を定義していること (= Railtie/Engine) は記録する
+            g = a[:gems][o.name]
+            g["category"] = o.category
+            g["initializer_count"] += 1
             e["category"] = o.category
           when K_PHASE
             key = s.name
@@ -177,6 +182,16 @@ module Hayate
         merged.sort_by { |k, v| [-v["inclusive_ms"]["median"], k.to_s] }.first(@top_initializers).map do |(name, ctx), v|
           { "name" => name, "context" => ctx }.merge(v)
         end
+      end
+
+      # Advisor (heavy_app_initializer) 用。表示用の top-N 切り詰めをかけない app 側の inclusive 時間。
+      def app_initializer_times(analyses)
+        inits = merge_runs(analyses.map { |a| a[:initializers].to_h }).select { |_, v| v["category"] == "app" }
+        files = merge_runs(analyses.map { |a| a[:files].to_h }).select { |k, v| v["category"] == "app" && k.include?("/config/initializers/") }
+        {
+          "initializers" => inits.map { |(name, ctx), v| { "name" => name, "context" => ctx, "category" => "app", "inclusive_ms" => v["inclusive_ms"] } },
+          "files" => files.map { |k, v| { "path" => k, "category" => "app", "inclusive_ms" => v["inclusive_ms"] } }
+        }
       end
 
       def on_loads(analyses)

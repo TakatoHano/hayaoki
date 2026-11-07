@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "../advisor"
+
 module Hayate
   module BootReport
     module Formatters
@@ -31,8 +33,9 @@ module Hayate
           out = []
           header(out)
           phases(out)
-          ranked(out, "Top gems (self time)", :gems, ->(r) { r.gems }, ->(e) { e["name"] }, "self_ms", breakdown: true)
-          ranked(out, "Top initializers (inclusive)", :inits, ->(r) { r.initializers }, ->(e) { [e["name"], e["context"]].compact.join(" ") }, "inclusive_ms")
+          ranked(out, "Top gems (self time)", :gems, ->(r) { r.gems }, ->(e) { e["name"] }, "self_ms", breakdown: { "req" => "require_ms", "onload" => "on_load_ms" })
+          ranked(out, "Top initializers (inclusive)", :inits, ->(r) { r.initializers }, ->(e) { [e["name"], e["context"]].compact.join(" ") }, "inclusive_ms",
+                 breakdown: { "init body (own time, not blamed on gem)" => "init_body_ms" })
           ranked(out, "Top on_load hooks (inclusive)", :on_loads, ->(r) { r.on_loads }, ->(e) { [e["name"], e["source"]].compact.join(" ") }, "inclusive_ms")
           false_requires(out)
           overhead(out)
@@ -78,7 +81,7 @@ module Hayate
           out << ""
         end
 
-        def ranked(out, title, _key, getter, namer, metric, breakdown: false)
+        def ranked(out, title, _key, getter, namer, metric, breakdown: nil)
           out << "#{title} (top #{@top})"
           lists = @reports.transform_values { |r| Array(getter.call(r)) }
           names = lists.values.first.first(@top).map(&namer)
@@ -105,7 +108,7 @@ module Hayate
               e = idx[@conds.first][n]
               if breakdown && e
                 out << line
-                parts = { "req" => "require_ms", "onload" => "on_load_ms", "init" => "initializer_ms" }.filter_map do |l, kk|
+                parts = breakdown.filter_map do |l, kk|
                   x = e[kk] && med(e[kk])
                   "#{l} #{fmt(x)}" if x && x >= 0.05
                 end
@@ -177,15 +180,21 @@ module Hayate
           sorted = @suggestions.each_with_index.sort_by { |s, i| [SUGGESTION_ORDER.index(s.confidence.to_s) || 9, i] }.map(&:first)
           sorted.each do |s|
             wrap("[#{s.confidence}] #{s.title}", 2, 9).each { |l| out << l }
+            wrap("id: #{s.id}", 9, 11).each { |l| out << l } if s.id
             ev = Array(s.evidence)
             ev.first(5).each { |e| wrap("- #{evidence_s(e)}", 9, 11).each { |l| out << l } }
             out << "         - (+#{ev.size - 5} more)" if ev.size > 5
             out << "         estimated savings: up to #{fmt(s.estimated_savings_ms)} ms" if s.estimated_savings_ms
+            wrap("overlaps with: #{s.overlaps.join(", ")} (savings not additive)", 9, 11).each { |l| out << l } unless Array(s.overlaps).empty?
             out << "         action:"
             s.action.to_s.split("\n").each do |line|
               lead = line[/\A */].size
               wrap(line.strip, 11 + lead, 13 + lead).each { |l| out << l }
             end
+          end
+          ub = Suggestion.savings_upper_bound(@suggestions)
+          if ub && @suggestions.count(&:estimated_savings_ms) > 1
+            wrap("total savings: at most #{fmt(ub)} ms (upper bound; findings overlap, so do not treat as additive)", 2, 4).each { |l| out << l }
           end
           Array(@suggestion_warnings).each { |w| wrap("! #{w}", 2, 4).each { |l| out << l } }
         end

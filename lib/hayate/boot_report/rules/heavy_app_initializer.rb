@@ -27,13 +27,17 @@ module Hayate
 
         def candidates
           by_name = {}
-          Array(get(ctx.report, :initializers)).each do |i|
+          # 切り詰め前の app_initializer_times があればそれを使う (無ければ表示用の上位 N 件)
+          full = get(ctx.report, :app_initializer_times)
+          inits = full ? get(full, :initializers) : get(ctx.report, :initializers)
+          files = full ? get(full, :files) : get(ctx.report, :files)
+          Array(inits).each do |i|
             next unless get(i, :category).to_s == "app"
             ms = med(get(i, :inclusive_ms)) or next
             name = [get(i, :name), get(i, :context)].compact.join(" ")
             add(by_name, name, ms, "initializer")
           end
-          Array(get(ctx.report, :files)).each do |f|
+          Array(files).each do |f|
             path = get(f, :path).to_s
             next unless get(f, :category).to_s == "app" && path.include?("/config/initializers/")
             ms = med(get(f, :inclusive_ms)) or next

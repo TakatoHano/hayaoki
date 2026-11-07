@@ -5,9 +5,15 @@ require_relative "rules/base"
 module Hayate
   module BootReport
     # 改善候補 1 件。evidence は String キーの Hash の配列。
-    Suggestion = Struct.new(:rule, :confidence, :title, :evidence, :estimated_savings_ms, :action, keyword_init: true) do
+    Suggestion = Struct.new(:rule, :confidence, :title, :evidence, :estimated_savings_ms, :action, :id, :overlaps, keyword_init: true) do
+      # 各 finding の節約見込みは重複しうるので足し算では出さず、上限 (単純和) として扱う。
+      def self.savings_upper_bound(list)
+        v = list.filter_map(&:estimated_savings_ms)
+        v.empty? ? nil : v.sum.round(1)
+      end
+
       def to_h
-        { "rule" => rule.to_s, "confidence" => confidence.to_s, "title" => title, "evidence" => evidence,
+        { "id" => id, "overlaps" => Array(overlaps), "rule" => rule.to_s, "confidence" => confidence.to_s, "title" => title, "evidence" => evidence,
           "estimated_savings_ms" => estimated_savings_ms, "action" => action }
       end
     end
@@ -52,7 +58,42 @@ module Hayate
           @warnings << "suggestion rule #{id} failed: #{e.class}: #{e.message}"[0, 300]
           []
         end
-        out.each_with_index.sort_by { |s, i| [CONFIDENCE_ORDER.index(s.confidence) || 99, -(s.estimated_savings_ms || 0), i] }.map(&:first)
+        sorted = out.each_with_index.sort_by { |s, i| [CONFIDENCE_ORDER.index(s.confidence) || 99, -(s.estimated_savings_ms || 0), i] }.map(&:first)
+        mark_overlaps(sorted)
+      end
+
+      GEM_EVIDENCE_KEY = { dev_gems_in_production: "name", unused_heavy_gem: "gem" }.freeze
+      GEM_RULES = GEM_EVIDENCE_KEY.keys.freeze
+
+      # id を振り、節約見込みが重なりうる finding を overlaps に載せる。
+      #  - 同じ gem を別ルールが指している
+      #  - app initializer の inclusive 時間には gem の require が含まれうるので、gem 系の finding と重なる
+      def mark_overlaps(list)
+        seen = Hash.new(0)
+        list.each do |s|
+          seen[s.rule] += 1
+          s.id = seen[s.rule] == 1 ? s.rule.to_s : "#{s.rule}##{seen[s.rule]}"
+        end
+        gems = {}.compare_by_identity
+        list.each { |s| gems[s] = gem_subjects(s) }
+        list.each do |s|
+          s.overlaps = list.filter_map do |o|
+            next if o.equal?(s)
+            o.id if (gems[s] & gems[o]).any? || initializer_vs_gem?(s, o)
+          end
+        end
+        list
+      end
+
+      def initializer_vs_gem?(a, b)
+        pair = [a.rule, b.rule]
+        pair.include?(:heavy_app_initializer) && pair.any? { |r| GEM_RULES.include?(r) }
+      end
+
+      def gem_subjects(s)
+        key = GEM_EVIDENCE_KEY[s.rule]
+        return [] unless key
+        Array(s.evidence).filter_map { |e| e[key] if e.is_a?(Hash) }
       end
     end
   end

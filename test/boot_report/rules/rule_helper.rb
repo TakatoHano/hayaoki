@@ -17,7 +17,7 @@ module RuleHelper
 
   def gem_row(name, ms, category: "gem", **extra)
     { "name" => name, "category" => category, "self_ms" => st(ms), "require_ms" => st(ms),
-      "on_load_ms" => st(0), "initializer_ms" => st(0) }.merge(extra)
+      "on_load_ms" => st(0), "initializer_count" => st(0) }.merge(extra)
   end
 
   # 文字列キーの Report。overrides で各属性を差し替える。

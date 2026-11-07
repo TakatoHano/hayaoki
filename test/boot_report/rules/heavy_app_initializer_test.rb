@@ -30,4 +30,18 @@ class HeavyAppInitializerTest < Minitest::Test
   def test_nothing_when_only_gem_initializers
     assert_empty run_rule(K, make_report(initializers: [init("x", 500, "gem")]), app_dir: Dir.tmpdir)
   end
+
+  def test_uses_untruncated_app_initializer_times_when_present
+    # 表示用の top-N には入っていない app の重い initializer / file も拾う
+    r = make_report(
+      initializers: [],
+      files: [],
+      app_initializer_times: {
+        "initializers" => [init("my_app.hidden", 90, "app")],
+        "files" => [{ "path" => "/srv/app/config/initializers/big.rb", "category" => "app", "inclusive_ms" => st(70) }]
+      }
+    )
+    s = run_rule(K, r, app_dir: Dir.tmpdir).fetch(0)
+    assert_equal ["my_app.hidden", "config/initializers/big.rb"], s.evidence.map { _1["name"] }
+  end
 end

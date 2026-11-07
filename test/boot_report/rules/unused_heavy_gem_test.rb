@@ -15,7 +15,7 @@ class UnusedHeavyGemTest < Minitest::Test
       assert_equal :low, s.confidence
       assert_in_delta 90.0, s.estimated_savings_ms
       assert_includes s.action, 'gem "aws-sdk-s3", require: false'
-      assert_includes s.title, "may be unused"
+      assert_includes s.title, "No references found to aws-sdk-s3"
     end
   end
 
@@ -48,11 +48,56 @@ class UnusedHeavyGemTest < Minitest::Test
     end
   end
 
-  def test_constants_from_payload_are_medium_and_used
+  def test_constants_from_payload_are_used_for_search
     with_app("lib/a.rb" => "Zed::Thing\n") do
       assert_empty run_rule(K, report(gem_row("whatever", 50, constants: ["Zed"])))
       s = run_rule(K, report(gem_row("whatever", 50, constants: ["Nope"]))).fetch(0)
-      assert_equal :medium, s.confidence
+      assert_equal :low, s.confidence
+    end
+  end
+
+  def test_apm_gems_are_excluded
+    gems = %w[newrelic_rpm ddtrace datadog sentry-ruby sentry-rails scout_apm skylight honeybadger bugsnag rollbar
+              appsignal opentelemetry-sdk opentelemetry-instrumentation-rails].map { gem_row(_1, 90) }
+    with_app("Gemfile" => gems.map { %(gem "#{_1["name"]}"\n) }.join) do
+      assert_empty run_rule(K, report(*gems))
+    end
+  end
+
+  def test_railtie_gems_are_excluded_by_measured_hooks
+    with_app("Gemfile" => %(gem "a"\ngem "b"\ngem "c"\n)) do
+      gems = [gem_row("a", 90, "initializer_count" => st(1)), gem_row("b", 90, "on_load_ms" => st(2)), gem_row("c", 90)]
+      assert_equal %w[c], run_rule(K, report(*gems)).map { _1.evidence[0]["gem"] }
+    end
+  end
+
+  def test_railtie_gems_are_excluded_by_gem_files
+    Dir.mktmpdir("fakegem") do |gdir|
+      FileUtils.mkdir_p(File.join(gdir, "lib/foo"))
+      File.write(File.join(gdir, "lib/foo/engine.rb"), "")
+      spec = Struct.new(:full_gem_path).new(gdir)
+      orig = Gem.method(:loaded_specs)
+      Gem.define_singleton_method(:loaded_specs) { { "foo" => spec } }
+      begin
+        with_app("Gemfile" => %(gem "foo"\n)) { assert_empty run_rule(K, report(gem_row("foo", 90))) }
+      ensure
+        Gem.define_singleton_method(:loaded_specs, orig.unbind.bind(Gem))
+      end
+    end
+  end
+
+  def test_gemfile_require_string_means_used_under_other_name
+    with_app("Gemfile" => %(gem "foo", require: "foo/bar"\ngem "baz", require: false\ngem "qux", require: true\n)) do
+      assert_equal %w[qux], run_rule(K, report(gem_row("foo", 90), gem_row("baz", 90), gem_row("qux", 90))).map { _1.evidence[0]["gem"] }
+    end
+  end
+
+  def test_dsl_names_count_as_reference
+    with_app("Gemfile" => %(gem "paper_trail"\n), "app/models/a.rb" => "class A\n  has_paper_trail\nend\n") do
+      assert_empty run_rule(K, report(gem_row("paper_trail", 90)))
+    end
+    with_app("Gemfile" => %(gem "paper_trail"\n), "app/models/a.rb" => "class A; end\n") do
+      assert_equal 1, run_rule(K, report(gem_row("paper_trail", 90))).size
     end
   end
 

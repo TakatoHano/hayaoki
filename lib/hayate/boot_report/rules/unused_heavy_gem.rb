@@ -25,6 +25,18 @@ module Hayate
           turbo-rails stimulus-rails jbuilder tailwindcss-rails jsbundling-rails cssbundling-rails
           solid_cache solid_queue solid_cable tzinfo-data kamal thruster net-imap net-smtp net-pop
         ].freeze
+        # APM / 監視系: Railtie や Rack middleware 経由で動くため定数参照が無くても使われている
+        APM_GEMS = %w[newrelic_rpm ddtrace datadog scout_apm skylight honeybadger bugsnag rollbar appsignal].freeze
+        APM_PREFIXES = %w[sentry- opentelemetry-].freeze
+        # gem が提供する DSL 名 (定数でなくクラス本体のマクロとして使われるもの)。小さく明示的に保つ
+        DSL_NAMES = {
+          "paper_trail" => %w[has_paper_trail], "carrierwave" => %w[mount_uploader mount_uploaders],
+          "friendly_id" => %w[friendly_id], "acts-as-taggable-on" => %w[acts_as_taggable_on acts_as_taggable],
+          "acts_as_list" => %w[acts_as_list], "ancestry" => %w[has_ancestry], "rolify" => %w[rolify],
+          "searchkick" => %w[searchkick], "counter_culture" => %w[counter_culture],
+          "devise" => %w[devise_for devise], "audited" => %w[audited], "aasm" => %w[aasm],
+          "enumerize" => %w[enumerize],
+        }.freeze
         # 既知の定数名 (gem 名から機械的に導けないもの)
         KNOWN_CONSTANTS = {
           "httparty" => %w[HTTParty], "aws-sdk-s3" => %w[Aws::S3 Aws], "aws-sdk" => %w[Aws],
@@ -40,13 +52,11 @@ module Hayate
           return [] if cands.empty?
           used = referenced(cands)
           cands.reject { |c| used.include?(c[:name]) }.sort_by { |c| -c[:ms] }.map do |c|
-            suggestion(c[:from_payload] ? :medium : :low,
-                       title: "#{c[:name]} (#{round(c[:ms])} ms) may be unused at boot; " \
-                              "its constants were not found in app/, config/ or lib/",
-                       evidence: [{ "gem" => c[:name], "self_ms" => round(c[:ms]), "searched_constants" => c[:tokens],
-                                    "constants_source" => c[:from_payload] ? "payload" : "inferred from gem name" }],
+            suggestion(:low,
+                       title: "No references found to #{c[:name]} in app code (#{round(c[:ms])} ms at boot)",
+                       evidence: [{ "gem" => c[:name], "self_ms" => round(c[:ms]), "searched_tokens" => c[:tokens] }],
                        savings: c[:ms],
-                       action: "Consider loading it lazily in the Gemfile:\n" \
+                       action: "If it is not needed at boot, consider loading it lazily in the Gemfile:\n" \
                                "  gem \"#{c[:name]}\", require: false\n" \
                                "and `require \"#{c[:name]}\"` where it is first needed. This is a static text search: " \
                                "it can miss use via metaprogramming, other gems, rake tasks outside the searched " \
@@ -57,30 +67,39 @@ module Hayate
         private
 
         def candidates
-          direct = direct_gems
+          entries = gemfile_entries
           ctx.gems.filter_map do |g|
             name = get(g, :name).to_s
             ms = med(get(g, :self_ms))
             next unless get(g, :category).to_s == "gem" && ms && ms > ctx.gem_threshold_ms
             next if EXCLUDED.include?(name) || IMPLICIT_USE.include?(name) || DevGemsInProduction.dev_gem?(name)
-            next if direct && !direct.key?(name)
-            next if direct && direct[name] == :lazy
+            next if apm?(name) || railtie?(g, name)
+            if entries
+              entry = entries[name]
+              next unless entry # 間接依存は Gemfile で require: false にできない
+              next if entry.require == false # 既に lazy
+              next if entry.require.is_a?(Array) && !entry.require.empty? # 別名で require されている
+            end
             given = Array(get(g, :constants)).map(&:to_s).reject(&:empty?)
-            tokens = given.empty? ? guess_constants(name) : given
-            { name: name, ms: ms, tokens: tokens, from_payload: !given.empty? }
+            tokens = (given.empty? ? guess_constants(name) : given) + DSL_NAMES.fetch(name, [])
+            { name: name, ms: ms, tokens: tokens.uniq }
           end
         end
 
-        # Gemfile に直接書かれた gem => :lazy (require: false 済み) / :eager。Gemfile が無ければ nil。
-        # 間接依存の gem は Gemfile で require: false にできないので対象から外す。
-        def direct_gems
-          src = gemfile or return nil
-          src.each_line.each_with_object({}) do |line, h|
-            code = line.sub(/#.*/, "")
-            next unless (m = code.match(/\A\s*gem\s*\(?\s*["']([^"']+)["']/))
-            lazy = code.match?(/require:\s*false|:require\s*=>\s*false/)
-            h[m[1]] = lazy ? :lazy : :eager
-          end
+        def apm?(name) = APM_GEMS.include?(name) || APM_PREFIXES.any? { name.start_with?(_1) }
+
+        # Railtie / Engine を持つ gem は初期化時に自動で組み込まれるので、定数参照が無くても使われている。
+        # 計測結果 (gem が initializer を定義している / on_load の時間が gem に計上されている) か、gem 内の railtie.rb / engine.rb で判定する。
+        def railtie?(g, name)
+          return true if (med(get(g, :initializer_count)) || 0) > 0 || (med(get(g, :on_load_ms)) || 0) > 0
+          railtie_files?(name)
+        end
+
+        def railtie_files?(name)
+          spec = Gem.loaded_specs[name] or return false
+          Dir.glob(File.join(spec.full_gem_path, "lib", "**", "{railtie,engine}.rb")).any?
+        rescue StandardError
+          false
         end
 
         # gem 名 → 定数名の候補 (ゆるい方に倒す: 一つでも見つかれば「使われている」とみなす)

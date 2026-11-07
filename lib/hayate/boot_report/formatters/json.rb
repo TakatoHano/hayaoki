@@ -2,6 +2,7 @@
 
 require "json"
 require_relative "../../version"
+require_relative "../advisor"
 
 module Hayate
   module BootReport
@@ -28,6 +29,8 @@ module Hayate
                   "reports" => reports.transform_values(&:to_h) }
           if @suggestions
             doc["suggestions"] = @suggestions.map { |s| s.respond_to?(:to_h) ? s.to_h : s }
+            # 非加算の上限 (findings は重複しうる)
+            doc["savings_upper_bound_ms"] = Suggestion.savings_upper_bound(@suggestions)
             doc["suggestion_warnings"] = Array(@suggestion_warnings)
           end
           (@pretty ? ::JSON.pretty_generate(doc) : ::JSON.generate(doc)) + "\n"

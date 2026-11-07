@@ -47,9 +47,37 @@ class AdvisorTest < Minitest::Test
   def test_suggestion_to_h_has_string_keys
     with_app do |dir|
       h = B::Advisor.new(make_report(gems: [gem_row("pry", 10)]), app_dir: dir).suggestions.first.to_h
-      assert_equal %w[action confidence estimated_savings_ms evidence rule title], h.keys.sort
+      assert_equal %w[action confidence estimated_savings_ms evidence id overlaps rule title], h.keys.sort
       assert_kind_of String, h["rule"]
       JSON.generate(h)
+    end
+  end
+
+  def test_overlapping_findings_are_marked_and_total_is_upper_bound
+    require "hayate/boot_report/formatters/text"
+    require "hayate/boot_report/formatters/json"
+    with_app("Gemfile" => %(gem "pry"\n)) do |dir|
+      r = make_report(
+        gems: [gem_row("pry", 80)],
+        initializers: [{ "name" => "x", "context" => nil, "inclusive_ms" => st(90), "self_ms" => st(90), "category" => "app" }]
+      )
+      a = B::Advisor.new(r, app_dir: dir, rules: [B::Rules::DevGemsInProduction, B::Rules::HeavyAppInitializer])
+      by = a.suggestions.to_h { [_1.rule, _1] }
+      assert_equal ["heavy_app_initializer"], by[:dev_gems_in_production].overlaps
+      assert_includes by[:heavy_app_initializer].overlaps, "dev_gems_in_production"
+      out = B::Formatters::Text.new.with_suggestions(a.suggestions).format("warm" => r)
+      assert_match(/overlaps with: /, out)
+      assert_match(/at most .* ms \(upper bound; findings overlap/, out)
+      doc = JSON.parse(B::Formatters::Json.new.with_suggestions(a.suggestions).format("warm" => r))
+      assert_in_delta a.suggestions.sum(&:estimated_savings_ms), doc["savings_upper_bound_ms"], 0.05
+    end
+  end
+
+  def test_unrelated_findings_do_not_overlap
+    with_app do |dir|
+      r = make_report(gems: [gem_row("pry", 10)], phases: { "boot" => st(1000.0), "eager_load" => st(300.0) })
+      a = B::Advisor.new(r, app_dir: dir, rules: [B::Rules::DevGemsInProduction, B::Rules::EagerLoadTradeoff])
+      assert a.suggestions.all? { _1.overlaps.empty? }
     end
   end
 
