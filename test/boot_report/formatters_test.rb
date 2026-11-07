@@ -7,6 +7,7 @@ require "hayate/boot_report/report"
 require "hayate/boot_report/formatters/text"
 require "hayate/boot_report/formatters/json"
 require "hayate/boot_report/formatters/speedscope"
+require "hayate/boot_report/formatters/redact"
 
 class BootReportFormattersTest < Minitest::Test
   def st(m, lo = nil, hi = nil) = { "median" => m, "min" => lo || m - 1, "max" => hi || m + 1 }
