@@ -6,7 +6,8 @@ name: Release
 # rubygems への push は Trusted Publishing (OIDC) を使うので、API キーを secrets に置かない。
 # rubygems.org の hayaoki の設定で、次の Trusted Publisher を登録しておくこと:
 #   repository: TakatoHano/hayaoki / workflow: release.yml / environment: release
-# environment "release" は v* タグと main (手動実行) からだけ使える。
+# environment "release" は v* タグと main (手動実行) からだけ使える。release ジョブは承認者 (TakatoHano) が
+# GitHub の画面で承認するまで待つ (Actions の実行画面の "Review deployments")。
 on:
   push:
     tags: ["v*"]
