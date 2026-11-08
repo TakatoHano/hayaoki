@@ -38,7 +38,8 @@ module Hayaoki
         nil
       end
 
-      def filter(records, since: nil, until_: nil, exclude_proactive: false)
+      # counts: optional Hash receiving "no_start_at" (rows dropped by --since/--until for lack of a parsable start_at)
+      def filter(records, since: nil, until_: nil, exclude_proactive: false, counts: nil)
         records.select do |r|
           next false if exclude_proactive && proactive?(r)
           if since || until_
@@ -47,7 +48,10 @@ module Hayaoki
             rescue ArgumentError
               nil
             end
-            next false unless t
+            unless t
+              counts["no_start_at"] += 1 if counts
+              next false
+            end
             next false if since && t < since
             next false if until_ && t > until_
           end
@@ -55,17 +59,21 @@ module Hayaoki
         end
       end
 
+      # n and status cover every row; the distributions only cover status == "ok" rows
+      # (no_request / boot_error / incomplete rows lack the phases and would skew them).
       def summarize(records, platform_init_ms: [])
         s = { "n" => records.size }
         s["status"] = records.map { |r| r["status"] || "unknown" }.tally.sort.to_h
-        s["proactive"] = records.count { |r| proactive?(r) }
-        s["user_facing"] = records.size - s["proactive"]
-        s["ready_ms"] = dist(records.filter_map { |r| r.dig("phases_ms", "to_ready") })
-        s["first_response_ms"] = dist(records.filter_map { |r| r.dig("phases_ms", "to_first_response") })
-        keys = (PHASE_ORDER + records.flat_map { |r| (r["phases_ms"] || {}).keys }).uniq
-        s["phases_ms"] = keys.to_h { |k| [k, dist(records.filter_map { |r| r.dig("phases_ms", k) })] }.compact
-        s["eager_top"] = eager(records)
-        s["first_request"] = first_request(records)
+        ok = records.select { |r| r["status"] == "ok" }
+        s["n_ok"] = ok.size
+        s["proactive"] = ok.count { |r| proactive?(r) }
+        s["user_facing"] = ok.size - s["proactive"]
+        s["ready_ms"] = dist(ok.filter_map { |r| r.dig("phases_ms", "to_ready") })
+        s["first_response_ms"] = dist(ok.filter_map { |r| r.dig("phases_ms", "to_first_response") })
+        keys = (PHASE_ORDER + ok.flat_map { |r| (r["phases_ms"] || {}).keys }).uniq
+        s["phases_ms"] = keys.to_h { |k| [k, dist(ok.filter_map { |r| r.dig("phases_ms", k) })] }.compact
+        s["eager_top"] = eager(ok)
+        s["first_request"] = first_request(ok)
         s["platform_init_ms"] = dist(platform_init_ms)
         s
       end

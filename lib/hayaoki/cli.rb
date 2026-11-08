@@ -79,8 +79,8 @@ module Hayaoki
       parser = OptionParser.new do |o|
         o.banner = "#{CSR_USAGE}\n\nReads hayaoki cold_start log lines from FILEs (default stdin)."
         o.on("--group-by KEY", "revision|platform.kind|runtime.ruby|init_type|... (dotted path)") { |v| opts[:group_by] = v }
-        o.on("--since TIME", "only starts at or after TIME (ISO 8601, by start_at)") { |v| opts[:since] = parse_time(v) }
-        o.on("--until TIME", "only starts at or before TIME (ISO 8601, by start_at)") { |v| opts[:until_] = parse_time(v) }
+        o.on("--since TIME", "only starts at or after TIME (ISO 8601, by start_at; lines without start_at are dropped and counted)") { |v| opts[:since] = parse_time(v) }
+        o.on("--until TIME", "only starts at or before TIME (ISO 8601, by start_at; lines without start_at are dropped and counted)") { |v| opts[:until_] = parse_time(v) }
         o.on("--format FORMAT", %w[text json], "text|json (default text)") { |v| opts[:format] = v }
         o.on("--exclude-proactive", "drop lines with idle_ms > 1000 (Lambda proactive init)") { opts[:exclude_proactive] = true }
         o.on("-h", "--help", "show this help") { opts[:action] = :help }

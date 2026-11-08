@@ -8,15 +8,18 @@ module Hayaoki
     # (jsonPayload, array or JSONL), and CloudWatch lines (prefix before the JSON, or a "message" string).
     class Reader
       MARKER = /"hayaoki"\s*:\s*"cold_start"/
+      CSV_HEADER = /\A"?@timestamp"?,"?@message/
       INIT_DURATION = /Init Duration: ([0-9.]+) ms/
 
-      attr_reader :records, :platform_init_ms, :skipped_other, :skipped_invalid
+      attr_reader :records, :platform_init_ms, :skipped_other, :skipped_invalid, :skipped_duplicate
 
       def initialize
         @records = []
         @platform_init_ms = []
         @skipped_other = 0
         @skipped_invalid = 0
+        @skipped_duplicate = 0
+        @seen = {}
       end
 
       # text: whole input. A single JSON document (array / object over many lines) is walked as one;
@@ -53,6 +56,14 @@ module Hayaoki
       def read_line(line)
         line = line.strip
         return if line.empty?
+        return if line.match?(CSV_HEADER)
+        if line.start_with?('"') && line.include?('""')
+          fields = csv_fields(line)
+          if fields.any? { |f| f.match?(MARKER) || f.match?(INIT_DURATION) }
+            fields.each { |f| read_line(f) if f.include?("{") || f.match?(INIT_DURATION) }
+            return
+          end
+        end
         before = @records.size
         found = false
         obj = line.start_with?("{") ? parse(line) : nil
@@ -99,7 +110,7 @@ module Hayaoki
         case node
         when Hash
           if node["hayaoki"] == "cold_start"
-            @records << node
+            add_record(node)
           else
             node.each_value { |v| walk(v) }
           end
@@ -111,6 +122,47 @@ module Hayaoki
             walk(obj) if obj
           end
         end
+      end
+
+      # Same id + pid (+ worker) is the same boot seen twice (overlapping exports); keep the first.
+      def add_record(node)
+        return @records << node if node["id"].nil?
+        key = [node["id"], node["pid"], node["worker"]]
+        if @seen[key]
+          @skipped_duplicate += 1
+        else
+          @seen[key] = true
+          @records << node
+        end
+      end
+
+      # Minimal RFC 4180 line split (quoted fields, "" escapes); CloudWatch Logs Insights CSV export.
+      def csv_fields(line)
+        fields = []
+        cur = +""
+        quoted = false
+        i = 0
+        while i < line.length
+          c = line[i]
+          if quoted
+            if c == '"'
+              if line[i + 1] == '"'
+                cur << '"'
+                i += 1
+              else
+                quoted = false
+              end
+            else
+              cur << c
+            end
+          elsif c == '"' then quoted = true
+          elsif c == "," then fields << cur
+                              cur = +""
+          else cur << c
+          end
+          i += 1
+        end
+        fields << cur
       end
 
       def scan_init(str)

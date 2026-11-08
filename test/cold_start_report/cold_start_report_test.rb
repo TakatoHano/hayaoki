@@ -107,4 +107,27 @@ class ColdStartReportTest < Minitest::Test
     assert_equal 0, code
     assert_includes out, "0 cold start line(s)"
   end
+
+  def test_cloudwatch_insights_csv_dedup_and_status_split
+    r = build("cloudwatch_insights.csv")
+    assert_equal 3, r["input"]["lines"]
+    assert_equal 1, r["input"]["skipped_duplicate"]
+    assert_equal 0, r["input"]["skipped_invalid"]
+    s = r["summary"]
+    assert_equal({ "boot_error" => 1, "ok" => 2 }, s["status"])
+    assert_equal 2, s["n_ok"]
+    assert_equal 2, s["ready_ms"]["n"]
+    out = Hayaoki::ColdStartReport::Formatters::Text.new.format(r)
+    assert_includes out, "boot_error=1"
+    assert_includes out, "1 duplicate"
+  end
+
+  def test_since_counts_rows_without_start_at
+    r = build("cloudwatch_insights.csv", since: Time.iso8601("2026-01-01T00:00:00Z"))
+    assert_equal 1, r["input"]["filtered_no_start_at"]
+    assert_equal 2, r["input"]["lines"]
+    assert_includes Hayaoki::ColdStartReport::Formatters::Text.new.format(r), "1 without start_at"
+    _, out, = run_cli(%w[cold-start-report --help])
+    assert_includes out, "without start_at"
+  end
 end

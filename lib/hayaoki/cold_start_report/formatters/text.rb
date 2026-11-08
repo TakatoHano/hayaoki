@@ -8,7 +8,9 @@ module Hayaoki
           out = ["hayaoki cold-start-report"]
           inp = result["input"]
           out << "  #{inp["lines"]} cold start line(s); skipped #{inp["skipped_other"]} other, #{inp["skipped_invalid"]} invalid" \
-                 "#{", filtered out #{inp["filtered"]}" if inp["filtered"].to_i > 0}"
+                 "#{", filtered out #{inp["filtered"]}" if inp["filtered"].to_i > 0}" \
+                 "#{" (#{inp["filtered_no_start_at"]} without start_at)" if inp["filtered_no_start_at"].to_i > 0}" \
+                 "#{", #{inp["skipped_duplicate"]} duplicate" if inp["skipped_duplicate"].to_i > 0}"
           out << "  group by: #{result["group_by"]}" if result["group_by"]
           out << ""
           if result["groups"]
@@ -27,8 +29,8 @@ module Hayaoki
 
         def summary(out, s)
           out << "n: #{s["n"]}  (#{s["status"].map { |k, v| "#{k}=#{v}" }.join(" ")})"
-          out << "starts: user-facing #{s["user_facing"]}, proactive (idle > #{Stats::PROACTIVE_IDLE_MS}ms) #{s["proactive"]}"
-          return if s["n"].zero?
+          out << "ok starts: user-facing #{s["user_facing"]}, proactive (idle > #{Stats::PROACTIVE_IDLE_MS}ms) #{s["proactive"]}  (distributions below use status=ok only)"
+          return if s["n_ok"].zero?
           out << ""
           out << "Time to ready / first response (ms)"
           table(out, [["ready", s["ready_ms"]], ["first response", s["first_response_ms"]]])
