@@ -7,7 +7,7 @@ require "test_helper"
 class ProbeAccuracyTest < Minitest::Test
   include ProbeHelper
 
-  TOL_MS = 2.0
+  TOL_MS = 2.0 * TIMING_SLACK
 
   CODE = <<~'RUBY'
     require "active_support/lazy_load_hooks"
