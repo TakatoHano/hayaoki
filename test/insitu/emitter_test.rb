@@ -54,6 +54,32 @@ class InsituEmitterTest < Minitest::Test
     assert_equal "proc_stat", h["start_source"]
   end
 
+  # Cloud Run gen1 (0.2.0): /proc starttime 2 h before the load mark. Not a boot: fall back to the
+  # load origin and keep the rejected gap in the line.
+  def test_implausible_process_start_falls_back_to_load
+    st = state(full_marks, start_ms: 1000.0 - 7_209_434)
+    h = I::Emitter.build(st, "ok", facts: FACTS, env: {})
+    assert_equal "load", h["start_source"]
+    assert_nil h["start_at"]
+    assert_equal({"reason" => "pre_load_over_limit", "pre_load_ms" => 7_209_434}, h["start_rejected"])
+    assert_nil h["phases_ms"]["pre_load"]
+    assert_equal 2190, h["phases_ms"]["to_first_response"]
+    assert_equal 1030, h["phases_ms"]["initialize"]
+    assert_equal "hayaoki cold start: ready 1920ms, first response 2190ms", h["message"]
+    # a start after the load mark is rejected too
+    h = I::Emitter.build(state(full_marks), "ok", start_ms: 1500.0, facts: FACTS, env: {})
+    assert_equal({"reason" => "start_after_load", "pre_load_ms" => -500}, h["start_rejected"])
+    assert_equal "load", h["start_source"]
+  end
+
+  def test_plausible_process_start_has_no_rejection_field
+    max = I::Emitter::MAX_PRE_LOAD_MS
+    h = I::Emitter.build(state(full_marks), "ok", start_ms: 1000.0 - max, facts: FACTS, env: {})
+    assert_equal "proc_stat", h["start_source"]
+    assert_equal max, h["phases_ms"]["pre_load"]
+    refute h.key?("start_rejected")
+  end
+
   def test_incomplete_message
     h = I::Emitter.build(state({initialize_end: 500, first_request_start: 600}), "incomplete", start_ms: nil, facts: FACTS, env: {})
     assert_equal "incomplete", h["status"]

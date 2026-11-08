@@ -7,6 +7,11 @@ module Hayaoki
     module Stats
       PROACTIVE_IDLE_MS = 1000
       PHASE_ORDER = %w[pre_load pre_bundler bundler_require app_config initialize eager_load to_ready idle first_request to_first_response].freeze
+      # Same bound as Insitu::Emitter::MAX_PRE_LOAD_MS (the report does not load insitu). Lines from
+      # hayaoki 0.2.0 can carry a bad /proc start (Cloud Run gen1: pre_load of 2 h); their start-based
+      # phases are dropped from the distributions, the rest of the line still counts.
+      MAX_PRE_LOAD_MS = 600_000
+      START_BASED = %w[pre_load to_ready to_first_response].freeze
       ALIASES = { "revision" => "platform.revision", "service" => "platform.service", "init_type" => "platform.init_type",
                   "platform" => "platform.kind", "ruby" => "runtime.ruby", "rails" => "runtime.rails" }.freeze
 
@@ -68,14 +73,26 @@ module Hayaoki
         s["n_ok"] = ok.size
         s["proactive"] = ok.count { |r| proactive?(r) }
         s["user_facing"] = ok.size - s["proactive"]
-        s["ready_ms"] = dist(ok.filter_map { |r| r.dig("phases_ms", "to_ready") })
-        s["first_response_ms"] = dist(ok.filter_map { |r| r.dig("phases_ms", "to_first_response") })
+        bad = {}.compare_by_identity
+        ok.each { |r| bad[r] = true if implausible_start?(r) }
+        s["implausible_start"] = bad.size
+        phase = ->(r, k) { START_BASED.include?(k) && bad[r] ? nil : r.dig("phases_ms", k) }
+        s["ready_ms"] = dist(ok.filter_map { |r| phase.(r, "to_ready") })
+        s["first_response_ms"] = dist(ok.filter_map { |r| phase.(r, "to_first_response") })
         keys = (PHASE_ORDER + ok.flat_map { |r| (r["phases_ms"] || {}).keys }).uniq
-        s["phases_ms"] = keys.to_h { |k| [k, dist(ok.filter_map { |r| r.dig("phases_ms", k) })] }.compact
+        s["phases_ms"] = keys.to_h { |k| [k, dist(ok.filter_map { |r| phase.(r, k) })] }.compact
         s["eager_top"] = eager(ok)
         s["first_request"] = first_request(ok)
         s["platform_init_ms"] = dist(platform_init_ms)
         s
+      end
+
+      # pre_load outside 0..MAX_PRE_LOAD_MS: the process start this line was timed from is not believable
+      def implausible_start?(rec)
+        v = rec.dig("phases_ms", "pre_load")
+        v.is_a?(Numeric) && (v.negative? || v > MAX_PRE_LOAD_MS)
+      rescue TypeError
+        false
       end
 
       def eager(records)

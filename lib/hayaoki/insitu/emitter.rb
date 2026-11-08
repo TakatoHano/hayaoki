@@ -12,6 +12,11 @@ module Hayaoki
     # Builds the v1 line (phase2.md §3.1) and writes it once per process.
     module Emitter
       TOP_EAGER = 5
+      # Largest believable process start -> hayaoki load gap. Lambda init is capped at 10 s and a
+      # Cloud Run startup probe allows at most 600 s for the whole startup, of which pre_load is a part.
+      # A gap beyond this is not a boot (seen on Cloud Run gen1: a 2 h gap between /proc starttime and the
+      # load mark), so the line falls back to the load origin and reports the rejected value.
+      MAX_PRE_LOAD_MS = 600_000
 
       module_function
 
@@ -46,6 +51,8 @@ module Hayaoki
       def build(state, status, start_ms: :auto, facts: nil, env: ENV)
         features = $LOADED_FEATURES.size
         start_ms = state.start_ms if start_ms == :auto
+        rejected = start_rejection(start_ms, state.marks[:loaded] || state.load_ms)
+        start_ms = nil if rejected
         origin = start_ms || state.load_ms
         m = State::MARKS.to_h { |k| [k.to_s, ms(Clock.since_start(state.marks[k], origin))] }
 
@@ -84,6 +91,9 @@ module Hayaoki
           "id" => state.id, "pid" => Process.pid, "worker" => state.worker?,
           "start_at" => Clock.start_at(start_ms), "start_source" => start_ms ? "proc_stat" : "load",
           "ready_source" => ready_source,
+        )
+        h["start_rejected"] = rejected if rejected
+        h.merge!(
           "platform" => Platform.fields(env),
           "runtime" => runtime(state, env),
           "marks_ms" => m,
@@ -93,6 +103,14 @@ module Hayaoki
           "proc" => facts || proc_facts(state, features, Clock.clk_tck),
         )
         h
+      end
+
+      # nil when start_ms is usable as the origin; otherwise {"reason", "pre_load_ms"} for the line
+      def start_rejection(start_ms, loaded_ms)
+        return nil unless start_ms && loaded_ms
+        gap = loaded_ms - start_ms
+        return nil if gap >= 0 && gap <= MAX_PRE_LOAD_MS
+        {"reason" => gap.negative? ? "start_after_load" : "pre_load_over_limit", "pre_load_ms" => ms(gap)}
       end
 
       def message(status, ready, fre)

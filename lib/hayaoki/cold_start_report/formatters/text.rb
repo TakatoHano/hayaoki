@@ -31,6 +31,10 @@ module Hayaoki
           out << "n: #{s["n"]}  (#{s["status"].map { |k, v| "#{k}=#{v}" }.join(" ")})"
           out << "ok starts: user-facing #{s["user_facing"]}, proactive (idle > #{Stats::PROACTIVE_IDLE_MS}ms) #{s["proactive"]}  (distributions below use status=ok only)"
           return if s["n_ok"].zero?
+          if s["implausible_start"].to_i > 0
+            out << "warning: #{s["implausible_start"]} line(s) with pre_load outside 0..#{Stats::MAX_PRE_LOAD_MS}ms (bad /proc process start); " \
+                   "their pre_load, to_ready and to_first_response are left out below"
+          end
           out << ""
           out << "Time to ready / first response (ms)"
           table(out, [["ready", s["ready_ms"]], ["first response", s["first_response_ms"]]])
