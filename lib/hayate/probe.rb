@@ -162,12 +162,15 @@ module Hayate::Probe
   end
 
   # --- 遅延インストール (§2.2) --------------------------------------------------
+  SELF_PATH = File.expand_path(__FILE__).freeze
+
   PENDING = {
     "/rails/initializable.rb" => :install_initializer,
     "/active_support/lazy_load_hooks.rb" => :install_on_load,
     "/zeitwerk/loader.rb" => :install_eager_load,
     "/bundler/runtime.rb" => :install_bundler,
     "/rails/application.rb" => :install_application,
+    "/active_support/deprecation/reporting.rb" => :install_deprecation,
   }
 
   # require が true を返した直後に呼ぶ。$LOADED_FEATURES.last (= res) の末尾一致で判定する。
@@ -191,6 +194,7 @@ module Hayate::Probe
   def self.install_eager_load = ::Zeitwerk::Loader.prepend(EagerLoadHook)
   def self.install_bundler = ::Bundler::Runtime.prepend(BundlerHook)
   def self.install_application = ::Rails::Application.prepend(AppHook)
+  def self.install_deprecation = ::ActiveSupport::Deprecation::Reporting.prepend(DeprecationHook)
 
   # probe が後から読み込まれた場合に備え、定義済みのものは即座にインストールする
   def self.install_defined
@@ -200,6 +204,7 @@ module Hayate::Probe
       "/zeitwerk/loader.rb" => -> { defined?(::Zeitwerk::Loader) },
       "/bundler/runtime.rb" => -> { defined?(::Bundler::Runtime) },
       "/rails/application.rb" => -> { defined?(::Rails::Application) },
+      "/active_support/deprecation/reporting.rb" => -> { defined?(::ActiveSupport::Deprecation::Reporting) },
     }.each do |suffix, check|
       next unless PENDING.key?(suffix)
       ok = begin
@@ -287,6 +292,21 @@ module Hayate::Probe
   module BundlerHook
     def require(*groups)
       Hayate::Probe.span(Hayate::Probe::K_PHASE, "bundler_require", groups) { super }
+    end
+  end
+
+  # 非推奨警告の "called from" は Rails 自身のフレームを飛ばした最初のフレームになる。probe のフック
+  # (initializer の run など) がそこに入ると警告の表示が変わるので、probe のファイルも飛ばさせる。
+  # Rails 7.0 は ignored_callstack、7.1 以降は ignored_callstack?。
+  module DeprecationHook
+    private
+
+    def ignored_callstack(path)
+      path.to_s.start_with?(Hayate::Probe::SELF_PATH) || super
+    end
+
+    def ignored_callstack?(path)
+      path.to_s.start_with?(Hayate::Probe::SELF_PATH) || super
     end
   end
 

@@ -94,7 +94,8 @@ class ProbeAccuracyTest < Minitest::Test
   end
 
   def test_lazy_install_leaves_only_missing_targets_pending
-    assert_equal ["/bundler/runtime.rb"], @rep["pending_hooks"]
+    # この fixture は Bundler と ActiveSupport::Deprecation を読まない
+    assert_equal ["/active_support/deprecation/reporting.rb", "/bundler/runtime.rb"], @rep["pending_hooks"].sort
     assert_empty @rep["probe_errors"]
   end
 

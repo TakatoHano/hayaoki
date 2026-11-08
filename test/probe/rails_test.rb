@@ -35,6 +35,12 @@ class ProbeRailsTest < Minitest::Test
     skip "bundle lock --local failed: #{self.class.lock_error.to_s[0, 300]}" if self.class.lock_error
   end
 
+  # fixture アプリが実際に使う rails の版 (bundle lock --local で決まる)
+  def rails_version
+    v = File.read(File.join(@dir, "Gemfile.lock"))[/^    rails \(([^)]+)\)/, 1]
+    Gem::Version.new(v || "0")
+  end
+
   def boot(env, probe:, code: 'require "./config/environment"')
     run_probe(code, chdir: @dir, env: RAILS_ENV_VARS.merge(env), probe_args: probe ? [PROBE] : [])
   end
@@ -55,8 +61,12 @@ class ProbeRailsTest < Minitest::Test
     assert(inits.any? { |s| s.name.include?("eager_load!") })
     assert_operator rep.of_kind(ProbeReport::K_EAGER).size, :>=, 1, "Zeitwerk eager_load span"
     tz = rep.named(ProbeReport::K_EAGER, "TZInfo.eager_load!")
-    assert_equal 1, tz.size, "eager_load_namespaces の span"
-    assert_match(%r{/tzinfo[^/]*/lib/tzinfo\.rb:\d+\z}, tz.first.res)
+    if rails_version >= Gem::Version.new("7.2")
+      assert_equal 1, tz.size, "eager_load_namespaces の span"
+      assert_match(%r{/tzinfo[^/]*/lib/tzinfo\.rb:\d+\z}, tz.first.res)
+    else
+      assert_empty tz, "Rails 7.1 以前は TZInfo を eager_load_namespaces に入れない"
+    end
     # Rails は eager_load_namespaces にも入っているので Rails.eager_load! は 2 回呼ばれる (2 回目は何もしない)
     assert_operator rep.named(ProbeReport::K_EAGER, "Rails.eager_load!").size, :>=, 1
     ad = rep.named(ProbeReport::K_EAGER, "ActionDispatch.eager_load!").first

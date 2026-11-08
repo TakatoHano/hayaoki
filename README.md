@@ -65,7 +65,7 @@ Estimated savings are upper bounds. Findings can overlap, and the output marks w
 
 ### TZInfo eager loading
 
-In production, Rails adds `TZInfo` to `config.eager_load_namespaces`, and `TZInfo.eager_load!` reads all ~600 time zones at boot. Measured with [`bench/tzinfo_eager_load.rb`](https://github.com/TakatoHano/hayate/blob/main/bench/tzinfo_eager_load.rb) (median of 7 fresh processes on a GitHub-hosted runner, Ruby 3.4):
+In production, Rails 7.2 and later add `TZInfo` to `config.eager_load_namespaces`, and `TZInfo.eager_load!` reads all ~600 time zones at boot. Measured with [`bench/tzinfo_eager_load.rb`](https://github.com/TakatoHano/hayate/blob/main/bench/tzinfo_eager_load.rb) (median of 7 fresh processes on a GitHub-hosted runner, Ruby 3.4):
 
 | Environment | `TZInfo.eager_load!` |
 | --- | --- |

@@ -50,7 +50,8 @@ class ProbeRecorderTest < Minitest::Test
     assert_equal "1.5", rep["spawn_at"]
     assert_nil rep["rails_root"]
     assert_equal File.realpath(File.join(FIXTURES, "edge")), rep["pwd_realpath"]
-    assert_equal %w[/bundler/runtime.rb /rails/application.rb /rails/initializable.rb /active_support/lazy_load_hooks.rb /zeitwerk/loader.rb].sort,
+    assert_equal %w[/bundler/runtime.rb /rails/application.rb /rails/initializable.rb /active_support/lazy_load_hooks.rb /zeitwerk/loader.rb
+                    /active_support/deprecation/reporting.rb].sort,
                  rep["pending_hooks"].sort
     assert_equal ["error_highlight", "did_you_mean"].sort - rep["specs"].keys, []
     name, (ver, path, _ext) = rep["specs"].first

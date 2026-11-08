@@ -111,6 +111,7 @@ end
 | H8 | `ActiveSupport::LazyLoadHooks#run_load_hooks` | prepend | H7 と同時 | load_hooks（`K_HOOKS`） | フック名、base のクラス名 |
 | H9 | `Zeitwerk::Loader#eager_load` | prepend | `zeitwerk/loader.rb` の読み込み直後 | eager_load | `tag` |
 | H9b | `config.eager_load_namespaces` の各要素と `Rails` の `eager_load!` | 特異クラスに prepend | H6 で `eager_load!` initializer を実行する直前 | eager_load（`<名前>.eager_load!`） | 定数の定義元（`Object.const_source_location`）、取れなければ元の `eager_load!` の位置 |
+| H9c | `ActiveSupport::Deprecation::Reporting#ignored_callstack`（7.0）/ `#ignored_callstack?`（7.1 以降） | prepend | `active_support/deprecation/reporting.rb` の読み込み直後 | - | probe のファイルも Rails のフレームと同じく飛ばす。非推奨警告の "called from" が probe を指さないようにする |
 | H10 | `Kernel#exit!` / `Process.exit!` | alias chain | probe 読み込み時（任意。§5.3） | - | 書き出してから委譲 |
 
 補足:

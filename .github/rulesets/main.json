@@ -29,6 +29,10 @@
           { "context": "test (ubuntu-latest, 3.4)", "integration_id": 15368 },
           { "context": "test (ubuntu-latest, 4.0)", "integration_id": 15368 },
           { "context": "test (macos-latest, 4.0)", "integration_id": 15368 },
+          { "context": "rails 7.0 (ruby 3.2)", "integration_id": 15368 },
+          { "context": "rails 7.1 (ruby 3.3)", "integration_id": 15368 },
+          { "context": "rails 7.2 (ruby 3.4)", "integration_id": 15368 },
+          { "context": "rails 8.0 (ruby 3.4)", "integration_id": 15368 },
           { "context": "ai-words", "integration_id": 15368 }
         ]
       }
