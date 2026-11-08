@@ -38,6 +38,19 @@ module Hayaoki
         end
       end
 
+      # Process._fork (Ruby >= 3.1) is called by fork, Process.fork and Kernel#fork in both
+      # parent and child. Parent: remember that it has children. Child: stamp the fork time.
+      module ForkHook
+        def _fork
+          pid = super
+          st = Hayaoki::Insitu.state
+          if st
+            pid.zero? ? st.forked_in_child! : st.forked_parent!
+          end
+          pid
+        end
+      end
+
       module LoaderEagerLoadHook
         def eager_load(...)
           st = Hayaoki::Insitu.state
@@ -63,6 +76,7 @@ module Hayaoki
         @state = State.new(env: env, entry: detect_entry, load_ms: load_ms, bootsnap_cache: bootsnap_cache_before_setup(env))
         ::Bundler::Runtime.prepend(Hooks::BundlerHook) if defined?(::Bundler::Runtime)
         install_rails_hooks if defined?(::Rails::Application)
+        ::Process.singleton_class.prepend(Hooks::ForkHook) if ::Process.respond_to?(:_fork)
         at_exit { at_exit! }
       rescue StandardError => e
         warn_once("start", e)
@@ -134,15 +148,30 @@ module Hayaoki
         warn_once("initialize", e)
       end
 
+      # false for rake (also `rails db:migrate`, which runs through Rake), `rails console` and
+      # `rails runner`. Anything else (puma, rackup, a Lambda adapter, custom scripts) counts as a server.
+      def server_process?
+        return false if defined?(::Rake) && ::Rake.respond_to?(:application) && !::Rake.application.top_level_tasks.empty?
+        return false if defined?(::Rails::Console)
+        return false if defined?(::Rails::Command::RunnerCommand) && !defined?(::Rails::Command::ServerCommand)
+        true
+      rescue StandardError
+        true
+      end
+
       def boot_error(error)
         @state&.boot_error = error.class.name
       rescue StandardError
         nil
       end
 
+      # Fallback line for a server process that got no request (or failed to boot). No
+      # "no_request" line from a process that forked children (Puma cluster master, the
+      # workers write their own) or from a non-server command (rake, console, runner).
       def at_exit!
         st = @state or return
         return if st.emitted?
+        return if !st.boot_error && (st.forked_children? || !server_process?)
         require_relative "emitter"
         Emitter.emit(st, st.boot_error ? "boot_error" : "no_request")
       rescue StandardError => e

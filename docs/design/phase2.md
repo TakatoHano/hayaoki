@@ -184,6 +184,16 @@ v0.2 records `first_request` (P7→P8), `new_features` (the `$LOADED_FEATURES` d
 
 Not in v0.2: per-file timing during the first request (it would need the probe), and comparison with warm request latency (use platform metrics).
 
+### 4.1 Process handling and known limitations (0.2)
+
+- `at_exit` writes the `no_request` line only from a server process. It stays quiet in rake (`Rake.application.top_level_tasks` not empty; this includes `rails db:migrate` and `assets:precompile` during an image build), `rails console`, `rails runner`, and in a process that forked children (a `Process._fork` prepend marks the parent, for example the Puma cluster master; the workers write their own lines). `boot_error` is still written in all of these.
+- Forked workers: the first-request and emit flags are scoped by pid, so each worker writes one line after its own first request (`worker: true`, same `id` as the master). With `preload_app!` the boot marks are the master's; `marks_ms.forked` is the time this worker was forked (null in a process that was not forked).
+- Known limitations:
+  - If `hayaoki/insitu` is loaded from `config/boot.rb` but the app never calls `Bundler.require`, the Rails hooks are not installed: no initialize/eager marks and no middleware, only the `at_exit` line.
+  - The eager-load namespace hooks are installed on the `config.eager_load_namespaces` list as it is at the start of `initialize!`. A namespace that an initializer adds later is not timed.
+  - `proc.i18n_loaded` is only informative when `config.eager_load` is false. With eager load on, `I18n.eager_load!` loads the translations during boot, so it is always true.
+  - A server that forks a one-off child (not a worker) also counts as a forking parent and writes no `no_request` line.
+
 ---
 
 ## 5. Templates

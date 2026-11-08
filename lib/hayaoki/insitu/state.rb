@@ -40,7 +40,7 @@ module Hayaoki
     # (Insitu.state); tests build their own.
     class State
       MARKS = %i[loaded bundler_require_start bundler_require_end initialize_start initialize_end
-                 first_probe first_request_start first_response_end].freeze
+                 first_probe first_request_start first_response_end forked].freeze
 
       attr_reader :id, :load_pid, :load_ms, :entry, :marks, :eager_by, :out, :emit_mode, :probe_hits
       attr_accessor :boot_error, :i18n_loaded, :first_request, :bootsnap_cache, :eager_ms
@@ -58,6 +58,7 @@ module Hayaoki
         @lock = Mutex.new
         @first_pid = nil
         @emitted_pid = nil
+        @forker_pid = nil
         @out = env["HAYAOKI_INSITU_OUT"].to_s.empty? ? "stdout" : env["HAYAOKI_INSITU_OUT"]
         @emit_mode = env["HAYAOKI_INSITU_EMIT"] == "ready" ? "ready" : "first_request"
         # Platform (and the other emit-time files) load lazily to keep boot cost down (§2.3).
@@ -101,6 +102,15 @@ module Hayaoki
       end
 
       def emitted? = @emitted_pid == Process.pid
+
+      # Set in the parent by Hooks::ForkHook (pid-scoped, so a child does not inherit it).
+      def forked_parent! = (@forker_pid = Process.pid)
+
+      def forked_children? = @forker_pid == Process.pid
+
+      # In a forked child (e.g. a Puma worker after preload): the boot marks are the parent's;
+      # this records when the child itself started.
+      def forked_in_child!(t = Clock.now_ms) = (@marks[:forked] = t)
 
       def worker? = Process.pid != @load_pid
 
