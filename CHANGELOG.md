@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- In-situ: a process start read from `/proc/self/stat` more than 600 s before hayaoki loaded (or after it) is no longer used. Seen once in seven Cloud Run gen1 cold starts as a `pre_load` of about 2 hours. The line then falls back to the load origin (`start_source: "load"`, `start_at` null) and adds `start_rejected: {"reason", "pre_load_ms"}`. The schema version stays 1.
+- `cold-start-report`: lines already written by 0.2.0 with such a start keep their other phases, but their `pre_load`, `to_ready` and `to_first_response` are left out of the distributions, with a warning that gives the count (`implausible_start` in JSON output).
+
 ## [0.2.0] - 2026-11-08
 
 ### In-situ cold-start logging

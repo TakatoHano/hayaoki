@@ -6,6 +6,7 @@ require "hayaoki/cli"
 require "hayaoki/cold_start_report/runner"
 require "hayaoki/cold_start_report/formatters/text"
 require "hayaoki/cold_start_report/formatters/json"
+require "hayaoki/insitu/emitter"
 
 class ColdStartReportTest < Minitest::Test
   FX = File.join(FIXTURES, "cold_start")
@@ -129,5 +130,26 @@ class ColdStartReportTest < Minitest::Test
     assert_includes Hayaoki::ColdStartReport::Formatters::Text.new.format(r), "1 without start_at"
     _, out, = run_cli(%w[cold-start-report --help])
     assert_includes out, "without start_at"
+  end
+
+  # 0.2.0 lines can carry a bad /proc start (pre_load ~2 h on Cloud Run gen1): drop only the
+  # start-based phases of that line and say so.
+  def test_implausible_start_excluded_from_start_based_phases
+    good = JSON.parse(fx("bare.jsonl").lines[0])
+    bad = JSON.parse(JSON.generate(good)).merge("id" => "badstart")
+    bad["phases_ms"].merge!("pre_load" => 7_209_434, "to_ready" => 7_211_232, "to_first_response" => 7_211_315)
+    r = Hayaoki::ColdStartReport.build([[good, bad].map { JSON.generate(_1) }.join("\n")])
+    s = r["summary"]
+    assert_equal 1, s["implausible_start"]
+    assert_equal 1, s["ready_ms"]["n"]
+    assert_equal 1, s["first_response_ms"]["n"]
+    %w[pre_load to_ready to_first_response].each { assert_equal 1, s["phases_ms"][_1]["n"], _1 }
+    assert_equal good["phases_ms"]["to_ready"], s["ready_ms"]["max"]
+    %w[initialize first_request].each { assert_equal 2, s["phases_ms"][_1]["n"], _1 }
+    out = Hayaoki::ColdStartReport::Formatters::Text.new.format(r)
+    assert_match(/warning: 1 line\(s\) with pre_load outside/, out)
+    assert_equal 0, build("bare.jsonl")["summary"]["implausible_start"]
+    refute_includes Hayaoki::ColdStartReport::Formatters::Text.new.format(build("bare.jsonl")), "warning:"
+    assert_equal Hayaoki::Insitu::Emitter::MAX_PRE_LOAD_MS, Hayaoki::ColdStartReport::Stats::MAX_PRE_LOAD_MS
   end
 end

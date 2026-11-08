@@ -55,7 +55,7 @@ Platform facts this relies on (verified 2026-11-08):
 - On Linux, all marks use `CLOCK_BOOTTIME`, so they share a time base with `starttime`. Each mark is stored as ms since process start (P1 = 0).
 - `start_at` (ISO 8601) = `CLOCK_REALTIME_now - (BOOTTIME_now - start_boottime)`. It is computed once, when the line is emitted.
 - Other platforms (macOS, or `/proc` not readable): origin = P3, `start_source: "load"`, and marks before P3 are null.
-- To verify: whether `/proc/self/stat` and `CLOCK_BOOTTIME` behave normally under Cloud Run gen1 (gVisor) and Lambda Firecracker. We expect yes. If the values look wrong, record `start_source: "none"`.
+- To verify: whether `/proc/self/stat` and `CLOCK_BOOTTIME` behave normally under Cloud Run gen1 (gVisor) and Lambda Firecracker. We expect yes. If the values look wrong, record `start_source: "none"`. (Done differently: an implausible start falls back to `start_source: "load"` and adds `start_rejected`; see §4.1.)
 
 ### 1.3 Extra cheap facts (read once, at emit time)
 
@@ -147,7 +147,7 @@ Checked by `bench/insitu_overhead.rb` (an A/B run like Phase 1 §8.3). It is a n
 ```
 
 - `platform.kind`: `cloud_run` (if `K_SERVICE` is set), `lambda` (if `AWS_LAMBDA_FUNCTION_NAME` is set; adds `function`, `version`, `memory_mb`, `init_type` from `AWS_LAMBDA_INITIALIZATION_TYPE`, and `log_stream` from `AWS_LAMBDA_LOG_STREAM_NAME`; these var names are still to be checked against the AWS env-var reference), or `generic`.
-- Fields added in the implementation: `ready_source` (`probe` / `initialize` / null), `error_class` (only with `boot_error`), `first_request.gc_time_ms`. `runtime.bootsnap_cache` = whether `<cache_dir>/bootsnap` existed when hayaoki loaded (before `bootsnap/setup`); null if bootsnap was already loaded. `eager_top` names are namespaces (`TZInfo`) or Zeitwerk loader tags (`rails.main`); only the outermost eager-load call is timed, so nested calls are not counted twice. `first_request.new_by_group` keeps the top 5 groups. `severity` is `ERROR` for `boot_error`.
+- Fields added in the implementation: `start_rejected` (only when the `/proc` start was not used; §4.1), `ready_source` (`probe` / `initialize` / null), `error_class` (only with `boot_error`), `first_request.gc_time_ms`. `runtime.bootsnap_cache` = whether `<cache_dir>/bootsnap` existed when hayaoki loaded (before `bootsnap/setup`); null if bootsnap was already loaded. `eager_top` names are namespaces (`TZInfo`) or Zeitwerk loader tags (`rails.main`); only the outermost eager-load call is timed, so nested calls are not counted twice. `first_request.new_by_group` keeps the top 5 groups. `severity` is `ERROR` for `boot_error`.
 - `ready` uses `first_probe` only when it is not later than `first_request_start`; otherwise `initialize_end`.
 - With `HAYAOKI_INSITU_EMIT=ready` the middleware is not inserted and the message has no "first response" part.
 - `status`: `ok`; `no_request` (emitted at `at_exit` before any real request); `incomplete` (emitted at `at_exit` when the first request started in this process but its response never finished: body never closed, hijack, or stopped mid-request; `first_request` is null); `boot_error` (`initialize!` raised; logs `error_class` only).
@@ -196,7 +196,7 @@ Not in v0.2: per-file timing during the first request (it would need the probe),
   - A server that forks a one-off child (not a worker) also counts as a forking parent and writes no `no_request` line.
   - Other non-web processes booting the app (custom job runners, a Solid Queue supervisor forked from Puma by `plugin :solid_queue`) are not detected and write a `no_request` line at exit; `HAYAOKI_INSITU=0` turns them off. Detecting them by constants is not reliable: gems that use Zeitwerk define their CLI constants as autoloads in the web process too.
   - Lambda Web Adapter's readiness check path defaults to `/`. Without `AWS_LWA_READINESS_CHECK_PATH`, that check counts as the first request. `/` is not ignored automatically because it may be a real first request; the README tells users to set the variable.
-  - `/proc/self/stat` starttime against `CLOCK_BOOTTIME` is unverified on Cloud Run gen1 (gVisor).
+  - `/proc/self/stat` starttime against `CLOCK_BOOTTIME` on Cloud Run gen1 (gVisor): 6 of 7 measured cold starts were normal (`uptime_ms` ≈ `to_first_response` + 50 ms). One had a `pre_load` of 7209 s, while the client saw a 2.9 s TTFB and `cpu_ms` was 3.5 s. Its starttime and `/proc/uptime` agree with each other (start about 1.8 s after sandbox boot), so the 2 h gap is on the sandbox clock between exec and the hayaoki load. Our guess is a sandbox that was suspended or restored after the process started; this is not verified. Since the Unreleased version, a start more than 600 s before the load mark (`Emitter::MAX_PRE_LOAD_MS`; Lambda init is at most 10 s, and a Cloud Run startup probe allows at most 600 s for the whole startup) or after it is rejected: the line uses the load origin and records `start_rejected`. `cold-start-report` leaves the start-based phases (`pre_load`, `to_ready`, `to_first_response`) of older lines over the same bound out of the distributions and prints a warning with the count.
   - Rack apps without Rails get no hooks; `use Hayaoki::Insitu::Middleware` in `config.ru` works (pass-through when off), with no initialize/eager marks.
 
 ---
