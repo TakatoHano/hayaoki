@@ -161,6 +161,35 @@ copy_ar_to_ecr() {
   return "$rc"
 }
 
+# LWA image used by the Lambda Dockerfiles. Cloud Build pulls from public.ecr.aws anonymously from shared
+# IPs and can hit "toomanyrequests: Rate exceeded", so with --builder cloudbuild it is mirrored first.
+LWA_PUBLIC_IMAGE="public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0"
+
+# mirror_lwa_to_ar DST CONTEXT: copies the linux/amd64 LWA image to DST (Artifact Registry) locally with
+# crane (anonymous pull, push with a gcloud token on stdin) and points CONTEXT/Dockerfile at DST.
+mirror_lwa_to_ar() {
+  local dst="$1" ctx="$2" rc=0
+  command -v crane >/dev/null || die "crane not found (brew install crane)"
+  gcloud auth print-access-token | crane auth login "${dst%%/*}" -u oauth2accesstoken --password-stdin
+  # single platform: an index would leave untagged child manifests that ar_prune_untagged could delete
+  crane copy --platform linux/amd64 "$LWA_PUBLIC_IMAGE" "$dst" || rc=$?
+  local m=""
+  if [[ $rc == 0 ]] && ! m="$(crane manifest "$dst")"; then
+    echo "error: could not read the manifest of $dst" >&2; rc=1
+  fi
+  if [[ $rc == 0 ]] && grep -Eq '"mediaType": *"application/vnd\.(oci\.image\.index|docker\.distribution\.manifest\.list)' <<<"$m"; then
+    echo "error: $dst is a manifest list/index" >&2; rc=1
+  fi
+  crane auth logout "${dst%%/*}" >/dev/null 2>&1 || true
+  [[ $rc == 0 ]] || die "could not mirror $LWA_PUBLIC_IMAGE to $dst"
+  grep -qF "COPY --from=$LWA_PUBLIC_IMAGE " "$ctx/Dockerfile" || die "$ctx/Dockerfile does not copy from $LWA_PUBLIC_IMAGE"
+  local tmp="$ctx/Dockerfile.tmp"
+  awk -v src="COPY --from=$LWA_PUBLIC_IMAGE " -v dst="COPY --from=$dst " \
+    'index($0, src) == 1 { $0 = dst substr($0, length(src) + 1) } { print }' "$ctx/Dockerfile" > "$tmp"
+  mv "$tmp" "$ctx/Dockerfile"
+  grep -qF "COPY --from=$dst " "$ctx/Dockerfile" || die "could not point $ctx/Dockerfile at $dst"
+}
+
 # --- masking ---------------------------------------------------------------
 # mask_stream: stdin -> stdout. Replaces the real identifiers (known at runtime) and IDs by placeholders.
 mask_stream() {
