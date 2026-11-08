@@ -1,0 +1,47 @@
+# Cloud Run service (Knative format). Deploy with:
+#   gcloud run services replace service.yaml --region REGION
+# Replace the image and the SECRET_KEY_BASE source before deploying.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: hayaoki-example
+spec:
+  template:
+    metadata:
+      annotations:
+        # Gives the container 2x the vCPU limit during startup and for 10 s after it. The boosted CPU is billed.
+        run.googleapis.com/startup-cpu-boost: "true"
+        # Scale to zero, so every idle period ends in a cold start. For latency-critical services,
+        # set minScale (min instances) instead: that is what removes cold starts for most requests.
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "3"
+    spec:
+      # One Puma process with RAILS_MAX_THREADS threads (8 in the Dockerfile): keep these equal.
+      containerConcurrency: 8
+      timeoutSeconds: 60
+      containers:
+        - image: REGION-docker.pkg.dev/PROJECT/REPOSITORY/hayaoki-example:TAG
+          ports:
+            - containerPort: 8080
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          env:
+            # HAYAOKI_INSITU is not set: it defaults to on when RAILS_ENV=production.
+            - name: RAILS_MAX_THREADS
+              value: "8"
+            - name: SECRET_KEY_BASE
+              valueFrom:
+                secretKeyRef:
+                  name: secret-key-base
+                  key: latest
+          # An HTTP probe passes on any 2xx or 3xx response. The budget is
+          # failureThreshold x periodSeconds = 60 s. The default probe is TCP, with 240 s.
+          startupProbe:
+            httpGet:
+              path: /up
+              port: 8080
+            periodSeconds: 1
+            timeoutSeconds: 1
+            failureThreshold: 60

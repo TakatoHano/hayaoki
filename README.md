@@ -67,6 +67,51 @@ The output has the line count, p50/p90/p99/max for ready, first response and eac
 | `--format FORMAT` | `text` or `json` (default `text`) |
 | `--exclude-proactive` | drop lines with `idle` > 1000 ms (Lambda proactive init) |
 
+## In-situ cold-start logging
+
+`boot-report` measures boot in a lab. The in-situ recorder measures real cold starts of a deployed app: it writes one JSON line per process, which `hayaoki cold-start-report` then summarizes. Installing it does not speed anything up.
+
+Install:
+
+```ruby
+# Gemfile
+gem "hayaoki", require: false
+
+# config/boot.rb
+ENV["BUNDLE_GEMFILE"] ||= File.expand_path("../Gemfile", __dir__)
+require "bundler/setup"
+require "hayaoki/insitu"   # before bootsnap/setup, so its cost is counted
+require "bootsnap/setup"
+```
+
+Do not require it before `bundler/setup`: RubyGems could activate a hayaoki version that conflicts with the lockfile. `gem "hayaoki", require: "hayaoki/insitu"` also works, but then the start of `Bundler.require` is not recorded.
+
+The line is written to stdout after the first non-health-check response (at exit if no request came). It is a bare JSON object, so Cloud Logging stores it in `jsonPayload` and CloudWatch Logs Insights can query its fields. It contains:
+
+- marks and phases in ms since process start (`phases_ms.to_ready`, `initialize`, `eager_load`, `first_request`, and so on), with the process start read from `/proc/self/stat` on Linux
+- `platform` (Cloud Run, Lambda, or generic), Ruby, Rails and hayaoki versions, and whether bootsnap and its cache were present
+- the top eager-loaded namespaces, and the first request's route, status and newly loaded files counted by gem
+- process facts: RSS, CPU time, GC counts, loaded feature count
+
+Query strings, raw paths, headers, environment values, exception messages and file names are never logged. The full schema is in [docs/design/phase2.md](docs/design/phase2.md#31-line-schema-v1).
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `HAYAOKI_INSITU` | on when `RAILS_ENV` or `RACK_ENV` is `production` | `0` turns it off (the require does nothing), `1` forces it on |
+| `HAYAOKI_INSITU_OUT` | `stdout` | `stdout`, `stderr`, or a file path (append) |
+| `HAYAOKI_INSITU_IGNORE_PATHS` | `/up` and `$AWS_LWA_READINESS_CHECK_PATH` | comma-separated health-check paths; a request to one sets `first_probe` and does not count as the first request |
+| `HAYAOKI_INSITU_EMIT` | `first_request` | `ready` emits at the end of `initialize!` instead, for apps whose first request may not come |
+
+Known limitations:
+
+- If `config/boot.rb` loads it but the app never calls `Bundler.require`, the Rails hooks are not installed: there are no initialize or eager-load marks and no middleware, only the line at exit.
+- Eager-load timing covers the namespaces in `config.eager_load_namespaces` at the start of `initialize!`. A namespace added later by an initializer is not timed.
+- `proc.i18n_loaded` is informative only when `config.eager_load` is false. With eager load on it is always true.
+- The exit-time line is not written by rake tasks, `rails console`, `rails runner`, or a process that forked children (for example the Puma cluster master; its workers write their own lines).
+- Time before the process starts (image pull, sandbox creation) is not visible to it. Use the platform's numbers (Lambda `Init Duration`, Cloud Run startup latency) for that.
+
+Deployment templates for Cloud Run and Lambda (Lambda Web Adapter) are in [`examples/`](examples/).
+
 ## Suggestions
 
 | Rule | Confidence | What it looks for |

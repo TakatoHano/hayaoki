@@ -1,0 +1,152 @@
+name: Templates
+
+# Builds the examples/ images with a generated Rails app, runs them as plain containers,
+# and checks the cold_start line. Nothing is deployed.
+on:
+  push:
+    paths:
+      - "examples/**"
+      - "lib/hayaoki/insitu*"
+      - "lib/hayaoki/insitu/**"
+      - ".github/workflows/templates.yml"
+  pull_request:
+    paths:
+      - "examples/**"
+      - "lib/hayaoki/insitu*"
+      - "lib/hayaoki/insitu/**"
+      - ".github/workflows/templates.yml"
+
+env:
+  RAILS_VERSION: "8.0.2"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+      - name: Cloud Run service.yaml has the required keys
+        run: |
+          ruby -ryaml -e '
+            svc = YAML.load_file("examples/cloud_run/service.yaml")
+            tmpl = svc.dig("spec", "template")
+            c = tmpl.dig("spec", "containers", 0)
+            probe = c["startupProbe"]
+            checks = {
+              "startup-cpu-boost" => tmpl.dig("metadata", "annotations", "run.googleapis.com/startup-cpu-boost") == "true",
+              "startupProbe path /up" => probe.dig("httpGet", "path") == "/up",
+              "probe budget <= 600 s" => probe["failureThreshold"] * probe["periodSeconds"] <= 600,
+              "concurrency = RAILS_MAX_THREADS" => tmpl.dig("spec", "containerConcurrency").to_s == c["env"].find { _1["name"] == "RAILS_MAX_THREADS" }["value"]
+            }
+            checks.each { |k, v| puts "#{v ? "ok  " : "FAIL"} #{k}" }
+            exit(checks.values.all? ? 0 : 1)
+          '
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: examples/cloud_run/Dockerfile
+          failure-threshold: error
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: examples/lambda_lwa/Dockerfile
+          failure-threshold: error
+      - name: sam validate --lint
+        # SAM CLI is preinstalled on ubuntu-latest runners
+        working-directory: examples/lambda_lwa
+        run: sam validate --lint --region us-east-1 --template-file template.yaml
+
+  build-and-run:
+    name: ${{ matrix.variant }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: cloud_run
+            port: 8080
+            kind: cloud_run
+            env: "-e K_SERVICE=ci -e K_REVISION=ci-1 -e K_CONFIGURATION=ci"
+          - variant: lambda_lwa
+            port: 3000
+            kind: lambda
+            # Lambda Web Adapter is only a Lambda extension, so outside Lambda this is a plain
+            # container. These variables make the recorder detect the Lambda platform.
+            env: "-e AWS_LAMBDA_FUNCTION_NAME=ci -e AWS_LAMBDA_FUNCTION_VERSION=1 -e AWS_LAMBDA_FUNCTION_MEMORY_SIZE=1769 -e AWS_LWA_READINESS_CHECK_PATH=/up"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+
+      - name: Generate the Rails app
+        run: |
+          gem install --no-document rails -v "$RAILS_VERSION"
+          rails "_${RAILS_VERSION}_" new app --minimal --skip-git --skip-docker --skip-bundle --skip-kamal --skip-thruster --skip-solid
+          cd app
+          mkdir -p vendor/hayaoki
+          cp -r "$GITHUB_WORKSPACE"/{lib,exe,hayaoki.gemspec,README.md,LICENSE,CHANGELOG.md} vendor/hayaoki/
+          cat >> Gemfile <<'GEMS'
+          gem "bootsnap", require: false
+          gem "hayaoki", path: "vendor/hayaoki", require: false
+          GEMS
+          cat > config/boot.rb <<'BOOT'
+          ENV["BUNDLE_GEMFILE"] ||= File.expand_path("../Gemfile", __dir__)
+          require "bundler/setup"
+          require "hayaoki/insitu"
+          require "bootsnap/setup"
+          BOOT
+          cat > app/controllers/home_controller.rb <<'CTRL'
+          class HomeController < ApplicationController
+            def index
+              render plain: "ok"
+            end
+          end
+          CTRL
+          cat > config/routes.rb <<'ROUTES'
+          Rails.application.routes.draw do
+            get "up" => "rails/health#show", as: :rails_health_check
+            root "home#index"
+          end
+          ROUTES
+          cp "$GITHUB_WORKSPACE/examples/puma.rb" config/puma.rb
+          bundle install
+
+      - name: Build image
+        run: docker build -f "examples/${{ matrix.variant }}/Dockerfile" -t "hayaoki-ci:${{ matrix.variant }}" app
+
+      - name: Run, request /up and /, collect logs
+        run: |
+          docker run -d --name ci -p "${{ matrix.port }}:${{ matrix.port }}" \
+            -e SECRET_KEY_BASE=ci-only-not-a-secret ${{ matrix.env }} \
+            "hayaoki-ci:${{ matrix.variant }}"
+          base="http://127.0.0.1:${{ matrix.port }}"
+          curl -fsS --retry 90 --retry-delay 1 --retry-connrefused "$base/up" -o /dev/null
+          curl -fsS "$base/" | tee /dev/stderr | grep -qx ok
+          sleep 1
+          docker stop ci
+          docker logs ci > container.log 2>&1 || true
+          cat container.log
+
+      - name: Assert the cold_start line
+        run: |
+          grep -F '{"hayaoki":"cold_start"' container.log > cold.jsonl || { echo "no cold_start line"; exit 1; }
+          ruby -rjson -e '
+            lines = File.readlines("cold.jsonl").map { JSON.parse(_1) }
+            abort "expected 1 line, got #{lines.size}" unless lines.size == 1
+            l = lines.first
+            errs = []
+            errs << "status=#{l["status"].inspect}" unless l["status"] == "ok"
+            errs << "platform.kind=#{l.dig("platform", "kind").inspect}" unless l.dig("platform", "kind") == ARGV[0]
+            errs << "phases_ms.to_ready is null" if l.dig("phases_ms", "to_ready").nil?
+            errs << "first_request.status=#{l.dig("first_request", "status").inspect}" unless l.dig("first_request", "status") == 200
+            errs << "runtime.bootsnap_cache=#{l.dig("runtime", "bootsnap_cache").inspect}" unless l.dig("runtime", "bootsnap_cache") == true
+            abort errs.join("; ") unless errs.empty?
+            puts "ok: ready #{l["phases_ms"]["to_ready"]} ms, first request #{l["first_request"]["status"]}"
+          ' "${{ matrix.kind }}"
+
+      - name: cold-start-report parses the line
+        run: |
+          ruby -Ilib exe/hayaoki cold-start-report --format json < cold.jsonl > report.json
+          ruby -rjson -e 'r = JSON.parse(File.read("report.json")); abort "n != 1" unless r.dig("summary", "n") == 1; puts "report ok"'
+          ruby -Ilib exe/hayaoki cold-start-report < cold.jsonl

@@ -1,0 +1,35 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Rails on Lambda with the Lambda Web Adapter (container image)
+
+Parameters:
+  SecretKeyBase:
+    Type: String
+    NoEcho: true
+    Description: Value for SECRET_KEY_BASE. Use Secrets Manager or SSM instead for real deployments.
+
+Resources:
+  RailsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Architectures: [x86_64]
+      # 1769 MB is one vCPU. Lambda allocates CPU in proportion to memory, so memory also sets boot time.
+      MemorySize: 1769
+      Timeout: 30
+      FunctionUrlConfig:
+        AuthType: AWS_IAM
+        # AuthType: NONE makes the URL public. Only use it if you intend that.
+      Environment:
+        Variables:
+          SECRET_KEY_BASE: !Ref SecretKeyBase
+          # HAYAOKI_INSITU is not set: it defaults to on when RAILS_ENV=production.
+          # AWS_LWA_PORT and AWS_LWA_READINESS_CHECK_PATH are set in the Dockerfile.
+    Metadata:
+      Dockerfile: Dockerfile
+      # The Rails app root. Copy Dockerfile and puma.rb into it first (see README.md).
+      DockerContext: .
+
+Outputs:
+  FunctionUrl:
+    Value: !GetAtt RailsFunctionUrl.FunctionUrl
