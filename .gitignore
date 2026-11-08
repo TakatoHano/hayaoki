@@ -5,3 +5,5 @@
 .bundle/
 test/fixtures/**/Gemfile.lock
 spike/**/*.json
+/bench/cloud/results/
+/bench/cloud/nohup.out
