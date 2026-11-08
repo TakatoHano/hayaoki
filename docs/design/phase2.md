@@ -84,7 +84,9 @@ require "bootsnap/setup"
 
 - Not before `bundler/setup`: RubyGems would activate whatever hayaoki version is installed, which can conflict with the lockfile.
 - Also supported: `gem "hayaoki", require: "hayaoki/insitu"`. In that case P4 start is unknown (`bundler_require_start: null`, `entry: "bundler"`). Everything else works.
-- Railtie: not used for setup. At P4 start (Rails is loaded by then), insitu prepends `AppHook`, inserts the middleware through a `Rails::Railtie` subclass defined at that point (`initializer "hayaoki.insitu"` → `app.middleware.insert_before 0, Hayaoki::Insitu::Middleware`), and installs the eager-load hooks. If `Bundler.require` is never called, it falls back to doing this at load time if `Rails::Application` is already defined.
+- Railtie: not used. At P4 start (Rails is loaded by then), insitu prepends `AppHook` to `Rails::Application`. At the start of `initialize!`, `AppHook` adds the middleware with `app.config.middleware.insert_before 0, Hayaoki::Insitu::Middleware` (the config proxy records it and Rails applies it when the Finisher builds the stack), and installs the eager-load hooks (only when `config.eager_load` is on). If `Bundler.require` is never called, it falls back to doing this at load time if `Rails::Application` is already defined. (Implementation, 2026-11-08: a Railtie subclass would also work, but it registers a railtie in every app and costs more than one config call.)
+- `runtime.entry`: `boot_rb` (loaded before `Bundler.require`), `bundler` (loaded by `Bundler.require`), `other` (loaded later, Rails already defined).
+- Load cost: at boot only `insitu.rb`, `clock`, `proc`, `state` and `hooks` load. `middleware` (and `platform`) load at `initialize!`; `emitter`, `mini_json`, `redact` and `version` load at emit time, after the first-request feature delta is taken.
 
 ### 2.2 Configuration (env vars only in 0.2)
 
@@ -145,6 +147,9 @@ Checked by `bench/insitu_overhead.rb` (an A/B run like Phase 1 §8.3). It is a n
 ```
 
 - `platform.kind`: `cloud_run` (if `K_SERVICE` is set), `lambda` (if `AWS_LAMBDA_FUNCTION_NAME` is set; adds `function`, `version`, `memory_mb`, `init_type` from `AWS_LAMBDA_INITIALIZATION_TYPE`, and `log_stream` from `AWS_LAMBDA_LOG_STREAM_NAME`; these var names are still to be checked against the AWS env-var reference), or `generic`.
+- Fields added in the implementation: `ready_source` (`probe` / `initialize` / null), `error_class` (only with `boot_error`), `first_request.gc_time_ms`. `runtime.bootsnap_cache` = whether `<cache_dir>/bootsnap` existed when hayaoki loaded (before `bootsnap/setup`); null if bootsnap was already loaded. `eager_top` names are namespaces (`TZInfo`) or Zeitwerk loader tags (`rails.main`); only the outermost eager-load call is timed, so nested calls are not counted twice. `first_request.new_by_group` keeps the top 5 groups. `severity` is `ERROR` for `boot_error`.
+- `ready` uses `first_probe` only when it is not later than `first_request_start`; otherwise `initialize_end`.
+- With `HAYAOKI_INSITU_EMIT=ready` the middleware is not inserted and the message has no "first response" part.
 - `status`: `ok`; `no_request` (emitted at `at_exit` before any real request); `boot_error` (`initialize!` raised; logs `error_class` only).
 - `ready` = `first_probe` when present, else `initialize_end`. `ready_source` tells which.
 - `phases_ms` duplicates what can be derived from `marks_ms`, so plain queries in Cloud Logging and Logs Insights work without any math. Null marks produce null phases.
