@@ -2,7 +2,7 @@
 
 # 起動時の設定を変えた版 (variant) ごとに、Rails アプリの起動時間と「最初に使うときのコスト」を測る。
 # アプリのディレクトリで実行する: ruby boot_variants.rb [RUNS] [VARIANT...]
-# variant ごとに config/initializers/zz_hayate_variant.rb を書き、終わったら消す。
+# variant ごとに config/initializers/zz_hayaoki_variant.rb を書き、終わったら消す。
 # 各計測は新しいプロセスで行い、中央値を Markdown の表として出す。
 require "json"
 require "rbconfig"
@@ -20,7 +20,7 @@ VARIANTS = {
     Devise.reload_routes = false if defined?(Devise)
   RUBY
 }.freeze
-FILE = "config/initializers/zz_hayate_variant.rb"
+FILE = "config/initializers/zz_hayaoki_variant.rb"
 
 CHILD = <<~'RUBY'
   now = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) * 1000.0 }
@@ -51,7 +51,7 @@ med = ->(a) { s = a.compact.sort; s.empty? ? nil : s[s.size / 2] }
 fmt = ->(x) { x.nil? ? "-" : (x.is_a?(Float) ? format("%.1f", x) : x.to_s) }
 
 rows = names.map do |name|
-  File.write(FILE, "# hayate bench variant: #{name}\n#{VARIANTS.fetch(name)}\n")
+  File.write(FILE, "# hayaoki bench variant: #{name}\n#{VARIANTS.fetch(name)}\n")
   samples = Array.new(runs + 1) do
     out = IO.popen([RbConfig.ruby, "-e", CHILD], err: %i[child out], &:read)
     raise "#{name}: #{out[-2000..] || out}" unless $?.success?

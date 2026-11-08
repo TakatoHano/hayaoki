@@ -32,7 +32,7 @@ class ProbeFeatureMatchTest < Minitest::Test
   ].freeze
 
   def test_feature_match
-    code = "#{CASES.inspect}.each { |f, n, _| puts Hayate::Probe.feature_match?(f, n) }"
+    code = "#{CASES.inspect}.each { |f, n, _| puts Hayaoki::Probe.feature_match?(f, n) }"
     r = run_probe(code)
     got = r.out.lines.map { _1.strip == "true" }
     CASES.each_with_index do |(f, n, want), i|
@@ -43,7 +43,7 @@ class ProbeFeatureMatchTest < Minitest::Test
   # 他スレッドのファイルが末尾にあっても、自分の feature を探し当てる
   def test_resolve_feature_does_not_take_another_threads_last_feature
     code = '$LOADED_FEATURES << "/app/tmp/th3_outer.rb" << "/app/tmp/th5_outer.rb"; ' \
-           'puts Hayate::Probe.resolve_feature("./th3_outer")'
+           'puts Hayaoki::Probe.resolve_feature("./th3_outer")'
     assert_equal "/app/tmp/th3_outer.rb", run_probe(code).out.strip
   end
 end

@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "hayate/boot_report/aggregator"
+require "hayaoki/boot_report/aggregator"
 
 class BootReportAggregatorTest < Minitest::Test
-  A = Hayate::BootReport::Aggregator
+  A = Hayaoki::BootReport::Aggregator
   W = 8
 
   # 合成 payload を作る。events は [kind, name, parent_index(span 番号 or nil), t0, t1, res] の配列 (µs)。

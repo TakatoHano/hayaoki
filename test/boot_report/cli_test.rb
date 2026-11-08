@@ -2,13 +2,13 @@
 
 require "test_helper"
 require "stringio"
-require "hayate/cli"
+require "hayaoki/cli"
 
-class HayateCLITest < Minitest::Test
+class HayaokiCLITest < Minitest::Test
   def cli
     @out = StringIO.new
     @err = StringIO.new
-    Hayate::CLI.new(stdout: @out, stderr: @err)
+    Hayaoki::CLI.new(stdout: @out, stderr: @err)
   end
 
   def test_parse_defaults
@@ -42,7 +42,7 @@ class HayateCLITest < Minitest::Test
     assert_includes @out.string, "--format"
     c = cli
     assert_equal 0, c.run(%w[--version])
-    assert_equal "hayate #{Hayate::VERSION}\n", @out.string
+    assert_equal "hayaoki #{Hayaoki::VERSION}\n", @out.string
   end
 
   def test_missing_app_dir
@@ -53,7 +53,7 @@ class HayateCLITest < Minitest::Test
 
   def test_integration_rails_min
     skip "rails is not installed" unless %w[rails zeitwerk].all? { !Gem::Specification.find_all_by_name(_1).empty? }
-    require "hayate/boot_report/runner"
+    require "hayaoki/boot_report/runner"
     require_relative "runner_test" unless defined?(BootReportRunnerTest)
     dir = BootReportRunnerTest.prepare_app
     skip "bundle lock failed" if BootReportRunnerTest.lock_error
@@ -65,7 +65,7 @@ class HayateCLITest < Minitest::Test
   end
 
   def test_bad_ruby_gives_short_message
-    dir = Dir.mktmpdir("hayate-cli")
+    dir = Dir.mktmpdir("hayaoki-cli")
     Minitest.after_run { FileUtils.rm_rf(dir) }
     File.write(File.join(dir, "ok.rb"), "")
     assert_equal 1, cli.run(["boot-report", "--ruby", "/nonexistent/ruby", "--entry", "ok.rb", "--runs", "1", dir])
@@ -74,7 +74,7 @@ class HayateCLITest < Minitest::Test
   end
 
   def test_unwritable_output
-    dir = Dir.mktmpdir("hayate-cli")
+    dir = Dir.mktmpdir("hayaoki-cli")
     Minitest.after_run { FileUtils.rm_rf(dir) }
     File.write(File.join(dir, "ok.rb"), "")
     assert_equal 1, cli.run(["boot-report", "--runs", "1", "--entry", "ok.rb", "--ruby", RbConfig.ruby, "--output", File.join(dir, "no/such/dir/o.txt"), dir])
@@ -82,7 +82,7 @@ class HayateCLITest < Minitest::Test
   end
 
   def test_production_secret_hint
-    dir = Dir.mktmpdir("hayate-cli")
+    dir = Dir.mktmpdir("hayaoki-cli")
     Minitest.after_run { FileUtils.rm_rf(dir) }
     File.write(File.join(dir, "boom.rb"), "raise 'Missing secret_key_base for production'\n")
     assert_equal 1, cli.run(["boot-report", "--runs", "1", "--entry", "boom.rb", "--ruby", RbConfig.ruby, dir])

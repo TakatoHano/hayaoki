@@ -2,7 +2,7 @@
 
 require_relative "base"
 
-module Hayate
+module Hayaoki
   module BootReport
     module Rules
       # AbstractController.eager_load! は全コントローラの action_methods を起動時に計算する。

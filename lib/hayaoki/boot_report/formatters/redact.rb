@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-module Hayate
+module Hayaoki
   module BootReport
     module Formatters
       # 出力 (JSON / speedscope の文字列) から個人を特定できる絶対パスを消す。

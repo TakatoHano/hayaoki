@@ -2,7 +2,7 @@
 
 ## [0.1.0] - 2026-11-08
 
-- `hayate boot-report` measures boot time over several runs and reports the median and range, in text, JSON, or speedscope format.
+- `hayaoki boot-report` measures boot time over several runs and reports the median and range, in text, JSON, or speedscope format.
 - The probe, injected with `ruby -r`, records require, require_relative, load, initializer, on_load, eager_load, `Bundler.require`, and `initialize!` as spans.
 - `config.eager_load_namespaces` entries (e.g. `TZInfo.eager_load!`) are recorded as eager_load spans and attributed to the gem that defines them, instead of disappearing into the `eager_load!` initializer body.
 - Requires are matched to loaded files for `./x`, `../x`, `x.so` (loaded as `.bundle` on macOS) and built-in extensions such as `prism/prism.so`. Before, these fell back to the last loaded file, which could be another thread's. Remaining fallbacks are counted and reported as a warning.

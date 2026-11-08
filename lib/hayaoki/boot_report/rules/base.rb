@@ -2,7 +2,7 @@
 
 require_relative "../gemfile"
 
-module Hayate
+module Hayaoki
   module BootReport
     # Report / RunResult は Hash のキーが String でも Symbol でも動くように、値の取り出しはこの補助を通す。
     module Access
@@ -47,7 +47,7 @@ module Hayate
     module Rules
       # 各ルールの基底。call は Suggestion の配列を返す。
       class Base
-        include Hayate::BootReport::Access
+        include Hayaoki::BootReport::Access
 
         def self.rule_id = name.split("::").last.gsub(/([a-z])([A-Z])/, '\1_\2').downcase.to_sym
 
@@ -89,7 +89,7 @@ module Hayate
         def gemfile_entries
           return @gemfile_entries if defined?(@gemfile_entries)
           src = gemfile
-          @gemfile_entries = src && Hayate::BootReport::Gemfile.parse(src, dir: File.dirname(gemfile_path))
+          @gemfile_entries = src && Hayaoki::BootReport::Gemfile.parse(src, dir: File.dirname(gemfile_path))
         end
 
         # 子プロセスの payload が記録した gem の full_gem_path ({ name => path })。計測対象 app の bundle を指す。

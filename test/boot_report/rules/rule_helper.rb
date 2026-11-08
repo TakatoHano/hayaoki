@@ -1,20 +1,20 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "hayate"
-require "hayate/boot_report/report"
-require "hayate/boot_report/advisor"
-require "hayate/boot_report/rules/dev_gems_in_production"
-require "hayate/boot_report/rules/bootsnap_ineffective"
-require "hayate/boot_report/rules/heavy_app_initializer"
-require "hayate/boot_report/rules/unused_heavy_gem"
-require "hayate/boot_report/rules/eager_load_tradeoff"
-require "hayate/boot_report/rules/tzinfo_eager_load"
-require "hayate/boot_report/rules/devise_reload_routes"
-require "hayate/boot_report/rules/controller_action_methods"
+require "hayaoki"
+require "hayaoki/boot_report/report"
+require "hayaoki/boot_report/advisor"
+require "hayaoki/boot_report/rules/dev_gems_in_production"
+require "hayaoki/boot_report/rules/bootsnap_ineffective"
+require "hayaoki/boot_report/rules/heavy_app_initializer"
+require "hayaoki/boot_report/rules/unused_heavy_gem"
+require "hayaoki/boot_report/rules/eager_load_tradeoff"
+require "hayaoki/boot_report/rules/tzinfo_eager_load"
+require "hayaoki/boot_report/rules/devise_reload_routes"
+require "hayaoki/boot_report/rules/controller_action_methods"
 
 module RuleHelper
-  B = Hayate::BootReport
+  B = Hayaoki::BootReport
 
   def st(m) = { "median" => m, "min" => m, "max" => m }
 
@@ -40,7 +40,7 @@ module RuleHelper
   end
 
   def with_app(files = {})
-    Dir.mktmpdir("hayate-app") do |dir|
+    Dir.mktmpdir("hayaoki-app") do |dir|
       files.each do |rel, body|
         path = File.join(dir, rel)
         FileUtils.mkdir_p(File.dirname(path))

@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-module Hayate
+module Hayaoki
   module BootReport
     # 集計結果。to_h は JSON.generate に渡せる値 (String キーの Hash / Array / 数値 / nil) だけで作る。
     class Report

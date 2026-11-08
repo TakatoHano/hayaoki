@@ -8,7 +8,7 @@ D=__dir__
   sp=[];inn=[]
   20.times do
     File.delete("#{D}/in.txt") rescue nil
-    system({"HAYATE_PROBE_OUT"=>"#{D}/o.json","INNER"=>"#{D}/in.txt"},"ruby","-r#{D}/../04_probe/probe.rb","-e","require '#{D}/d/s#{ms}.rb'")
+    system({"HAYAOKI_PROBE_OUT"=>"#{D}/o.json","INNER"=>"#{D}/in.txt"},"ruby","-r#{D}/../04_probe/probe.rb","-e","require '#{D}/d/s#{ms}.rb'")
     j=File.read("#{D}/o.json"); ev=j[/"events":(\[.*?\]),"specs"/m,1]
     e=eval(ev.gsub("null","nil")); w=7
     i=(0...e.size/w).find{|k| e[k*w+1].to_s.include?("s#{ms}.rb")}
@@ -19,7 +19,7 @@ end
 puts "C: empty span"
 e2=[]
 20.times do
-  system({"HAYATE_PROBE_OUT"=>"#{D}/o.json"},"ruby","-r#{D}/../04_probe/probe.rb","-e","3.times{|i| load '#{D}/d/empty.rb'}; require '#{D}/d/empty.rb'")
+  system({"HAYAOKI_PROBE_OUT"=>"#{D}/o.json"},"ruby","-r#{D}/../04_probe/probe.rb","-e","3.times{|i| load '#{D}/d/empty.rb'}; require '#{D}/d/empty.rb'")
   e=eval(File.read("#{D}/o.json")[/"events":(\[.*?\]),"specs"/m,1].gsub("null","nil"))
   (0...e.size/7).each{|k| e2<<[e[k*7],e[k*7+4]-e[k*7+3]]}
 end

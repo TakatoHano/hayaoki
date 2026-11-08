@@ -1,25 +1,25 @@
 # frozen_string_literal: true
 
-# hayate boot-report の probe (子プロセス側)。設計: docs/design/probe.md
+# hayaoki boot-report の probe (子プロセス側)。設計: docs/design/probe.md
 #
-#   ruby -r/path/to/hayate/probe.rb -e 'require "./config/environment"'
+#   ruby -r/path/to/hayaoki/probe.rb -e 'require "./config/environment"'
 #
 # - 依存ゼロ (json も require しない)。Ruby 3.2 の構文で書く。
 # - require 系は alias chain で包む (Kernel には prepend しない。§1.3, §1.4)。
 # - Rails 関連 (H4〜H9) は対象ファイルの require 直後に遅延 prepend する (§2.2)。
-# - 結果は ENV["HAYATE_PROBE_OUT"] のパスへ tmp + rename で書く (§5)。
-return if defined?(::Hayate::Probe::INSTALLED)
+# - 結果は ENV["HAYAOKI_PROBE_OUT"] のパスへ tmp + rename で書く (§5)。
+return if defined?(::Hayaoki::Probe::INSTALLED)
 
-module Hayate; end
+module Hayaoki; end
 
-module Hayate::Probe
+module Hayaoki::Probe
   CLOCK = Process::CLOCK_MONOTONIC
   T0 = Process.clock_gettime(CLOCK)
   T0_REAL = Process.clock_gettime(Process::CLOCK_REALTIME)
   CPU0 = Process.clock_gettime(Process::CLOCK_PROCESS_CPUTIME_ID)
   PID = Process.pid
-  OUT = ENV.delete("HAYATE_PROBE_OUT")
-  SPAWN_AT = ENV.delete("HAYATE_SPAWN_AT")
+  OUT = ENV.delete("HAYAOKI_PROBE_OUT")
+  SPAWN_AT = ENV.delete("HAYAOKI_SPAWN_AT")
   PRE_FEATURES = $LOADED_FEATURES.size
   GC_COUNT0 = GC.count
   GC_TIME0 = GC.stat(:time)
@@ -33,7 +33,7 @@ module Hayate::Probe
   BUFFERS = []
   BUF_LOCK = Mutex.new
   K_REQ = 0; K_RR = 1; K_LOAD = 2; K_INIT = 3; K_ONLOAD = 4; K_HOOKS = 5; K_EAGER = 6; K_PHASE = 7
-  BUILTIN_REQUIRE = Kernel.private_method_defined?(:gem_original_require) ? :gem_original_require : :__hayate_require
+  BUILTIN_REQUIRE = Kernel.private_method_defined?(:gem_original_require) ? :gem_original_require : :__hayaoki_require
 
   @on = true
   @false_count = 0
@@ -45,7 +45,7 @@ module Hayate::Probe
   @boot_end = nil
   @errors = []
   @warnings = []
-  @warnings << "gem_original_require not found; delegating require_relative to the builtin require" if BUILTIN_REQUIRE == :__hayate_require && defined?(::Gem::Specification)
+  @warnings << "gem_original_require not found; delegating require_relative to the builtin require" if BUILTIN_REQUIRE == :__hayaoki_require && defined?(::Gem::Specification)
 
   # --- recorder (ホットパス。ブロックを使わずフレームも増やさない) -----------------
 
@@ -58,8 +58,8 @@ module Hayate::Probe
       ev = EV
       tid = 0
     else
-      st = t.thread_variable_get(:__hayate_stack) || t.thread_variable_set(:__hayate_stack, [])
-      ev = t.thread_variable_get(:__hayate_buf) || new_buffer(t)
+      st = t.thread_variable_get(:__hayaoki_stack) || t.thread_variable_set(:__hayaoki_stack, [])
+      ev = t.thread_variable_get(:__hayaoki_buf) || new_buffer(t)
       tid = t.object_id
     end
     parent = st.last
@@ -74,7 +74,7 @@ module Hayate::Probe
   # スレッド専用バッファを作る。初回だけ Mutex で全体のリストに登録する。
   def self.new_buffer(th)
     buf = []
-    th.thread_variable_set(:__hayate_buf, buf)
+    th.thread_variable_set(:__hayaoki_buf, buf)
     BUF_LOCK.synchronize { BUFFERS << buf }
     buf
   end
@@ -84,8 +84,8 @@ module Hayate::Probe
     t = Process.clock_gettime(CLOCK)
     th = Thread.current
     main = th.equal?(MAIN)
-    st = main ? MAIN_STACK : th.thread_variable_get(:__hayate_stack)
-    ev = main ? EV : th.thread_variable_get(:__hayate_buf)
+    st = main ? MAIN_STACK : th.thread_variable_get(:__hayaoki_stack)
+    ev = main ? EV : th.thread_variable_get(:__hayaoki_buf)
     st.pop
     if false.equal?(res) && kind <= K_LOAD && ev.size == i + W
       # false を返した require は span として残さず、回数と時間だけ数える (§3.5)
@@ -253,12 +253,12 @@ module Hayate::Probe
   module InitializerHook
     def run(*args)
       meta = begin
-        [@context.class.name, Hayate::Probe.loc(block)]
+        [@context.class.name, Hayaoki::Probe.loc(block)]
       rescue StandardError
         nil
       end
-      Hayate::Probe.hook_eager_namespaces if name == :eager_load!
-      Hayate::Probe.span(Hayate::Probe::K_INIT, name.to_s, meta) { super }
+      Hayaoki::Probe.hook_eager_namespaces if name == :eager_load!
+      Hayaoki::Probe.span(Hayaoki::Probe::K_INIT, name.to_s, meta) { super }
     end
   end
 
@@ -267,7 +267,7 @@ module Hayate::Probe
   # ここに入るので、namespace ごとに K_EAGER span を作る。meta は元の eager_load! の定義位置 (持ち主の判定用)。
   module NamespaceEagerLoadHook
     def eager_load!(...)
-      name = Hayate::Probe.label(self)
+      name = Hayaoki::Probe.label(self)
       # ActiveSupport::Autoload#eager_load! や Engine の delegate だと定義位置が共通の場所になるので、
       # 定数を定義したファイルを優先し、取れなければ元の eager_load! の位置を使う。
       loc = begin
@@ -277,7 +277,7 @@ module Hayate::Probe
       rescue StandardError, NameError
         nil
       end
-      Hayate::Probe.span(Hayate::Probe::K_EAGER, "#{name}.eager_load!", loc) { super }
+      Hayaoki::Probe.span(Hayaoki::Probe::K_EAGER, "#{name}.eager_load!", loc) { super }
     end
   end
 
@@ -295,23 +295,23 @@ module Hayate::Probe
 
   module LoadHooksHook
     def run_load_hooks(name, base = Object)
-      Hayate::Probe.span(Hayate::Probe::K_HOOKS, name.to_s, Hayate::Probe.label(base)) { super }
+      Hayaoki::Probe.span(Hayaoki::Probe::K_HOOKS, name.to_s, Hayaoki::Probe.label(base)) { super }
     end
 
     private def execute_hook(name, base, options, block)
-      Hayate::Probe.span(Hayate::Probe::K_ONLOAD, name.to_s, Hayate::Probe.loc(block)) { super }
+      Hayaoki::Probe.span(Hayaoki::Probe::K_ONLOAD, name.to_s, Hayaoki::Probe.loc(block)) { super }
     end
   end
 
   module EagerLoadHook
     def eager_load(...)
-      Hayate::Probe.span(Hayate::Probe::K_EAGER, tag.to_s, nil) { super }
+      Hayaoki::Probe.span(Hayaoki::Probe::K_EAGER, tag.to_s, nil) { super }
     end
   end
 
   module BundlerHook
     def require(*groups)
-      Hayate::Probe.span(Hayate::Probe::K_PHASE, "bundler_require", groups) { super }
+      Hayaoki::Probe.span(Hayaoki::Probe::K_PHASE, "bundler_require", groups) { super }
     end
   end
 
@@ -322,17 +322,17 @@ module Hayate::Probe
     private
 
     def ignored_callstack(path)
-      path.to_s.start_with?(Hayate::Probe::SELF_PATH) || super
+      path.to_s.start_with?(Hayaoki::Probe::SELF_PATH) || super
     end
 
     def ignored_callstack?(path)
-      path.to_s.start_with?(Hayate::Probe::SELF_PATH) || super
+      path.to_s.start_with?(Hayaoki::Probe::SELF_PATH) || super
     end
   end
 
   module AppHook
     def initialize!(...)
-      Hayate::Probe.span(Hayate::Probe::K_PHASE, "initialize", nil) { super }
+      Hayaoki::Probe.span(Hayaoki::Probe::K_PHASE, "initialize", nil) { super }
     end
   end
 
@@ -413,7 +413,7 @@ module Hayate::Probe
   end
 
   def self.payload(status, error, now)
-    own = $LOADED_FEATURES.count { |f| f.end_with?("/hayate/probe.rb") }
+    own = $LOADED_FEATURES.count { |f| f.end_with?("/hayaoki/probe.rb") }
     grew = $LOADED_FEATURES.size - PRE_FEATURES - own
     if grew > 0 && @false_count == 0 && EV.empty? && BUFFERS.all?(&:empty?)
       @warnings << "$LOADED_FEATURES grew by #{grew} but no require was recorded (require may be overridden without alias_method)"
@@ -446,7 +446,7 @@ module Hayate::Probe
     File.rename("#{OUT}.tmp", OUT)
   rescue Exception => e # at_exit で例外を出して終了コードを変えない
     begin
-      $stderr.puts "[hayate probe] write failed: #{e.class}: #{e.message}"
+      $stderr.puts "[hayaoki probe] write failed: #{e.class}: #{e.message}"
     rescue StandardError
       nil
     end
@@ -456,28 +456,28 @@ end
 # --- Kernel (alias chain。prepend は使わない) -------------------------------------
 [::Kernel, ::Kernel.singleton_class].each do |k|
   k.class_eval do
-    alias_method :__hayate_require, :require
+    alias_method :__hayaoki_require, :require
     alias_method :require, :require # -w での再定義警告を抑止 (bootsnap と同じ手法)
     def require(path)
-      i = Hayate::Probe.enter(0, path)
+      i = Hayaoki::Probe.enter(0, path)
       ok = false
-      r = __hayate_require(path)
+      r = __hayaoki_require(path)
       ok = true
       r
     ensure
-      Hayate::Probe.leave(i, 0, ok ? (r && Hayate::Probe.resolve_feature(path)) : :raised) if i
+      Hayaoki::Probe.leave(i, 0, ok ? (r && Hayaoki::Probe.resolve_feature(path)) : :raised) if i
     end
 
-    alias_method :__hayate_load, :load
+    alias_method :__hayaoki_load, :load
     alias_method :load, :load
     def load(path, wrap = false)
-      i = Hayate::Probe.enter(2, path)
+      i = Hayaoki::Probe.enter(2, path)
       ok = false
-      r = __hayate_load(path, wrap)
+      r = __hayaoki_load(path, wrap)
       ok = true
       r
     ensure
-      Hayate::Probe.leave(i, 2, ok ? path.to_s : :raised) if i
+      Hayaoki::Probe.leave(i, 2, ok ? path.to_s : :raised) if i
     end
   end
 end
@@ -495,19 +495,19 @@ end
     base ||= File.expand_path(loc.path) if loc&.path && !loc.path.start_with?("(eval")
     raise LoadError, "cannot infer basepath" unless base
     abs = File.expand_path(path, File.dirname(base))
-    i = Hayate::Probe.enter(1, abs)
+    i = Hayaoki::Probe.enter(1, abs)
     ok = false
-    r = __send__(Hayate::Probe::BUILTIN_REQUIRE, abs)
+    r = __send__(Hayaoki::Probe::BUILTIN_REQUIRE, abs)
     ok = true
     r
   ensure
-    Hayate::Probe.leave(i, 1, ok ? (r && Hayate::Probe.resolve_feature(abs)) : :raised) if i
+    Hayaoki::Probe.leave(i, 1, ok ? (r && Hayaoki::Probe.resolve_feature(abs)) : :raised) if i
   end
 
-  private :require, :load, :require_relative, :__hayate_require, :__hayate_load
+  private :require, :load, :require_relative, :__hayaoki_require, :__hayaoki_load
 end
-::Kernel.singleton_class.send(:private, :__hayate_require, :__hayate_load)
+::Kernel.singleton_class.send(:private, :__hayaoki_require, :__hayaoki_load)
 
-Hayate::Probe.install_defined
-at_exit { Hayate::Probe.write! }
-Hayate::Probe::INSTALLED = true
+Hayaoki::Probe.install_defined
+at_exit { Hayaoki::Probe.write! }
+Hayaoki::Probe::INSTALLED = true

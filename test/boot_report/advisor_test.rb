@@ -54,8 +54,8 @@ class AdvisorTest < Minitest::Test
   end
 
   def test_overlapping_findings_are_marked_and_total_is_upper_bound
-    require "hayate/boot_report/formatters/text"
-    require "hayate/boot_report/formatters/json"
+    require "hayaoki/boot_report/formatters/text"
+    require "hayaoki/boot_report/formatters/json"
     with_app("Gemfile" => %(gem "pry"\n)) do |dir|
       r = make_report(
         gems: [gem_row("pry", 80)],
@@ -82,8 +82,8 @@ class AdvisorTest < Minitest::Test
   end
 
   def test_text_and_json_integration
-    require "hayate/boot_report/formatters/text"
-    require "hayate/boot_report/formatters/json"
+    require "hayaoki/boot_report/formatters/text"
+    require "hayaoki/boot_report/formatters/json"
     with_app("Gemfile" => %(gem "slowthing"\n)) do |dir|
       r = make_report(gems: [gem_row("pry", 10), gem_row("slowthing", 80)])
       a = B::Advisor.new(r, app_dir: dir)

@@ -1,15 +1,15 @@
 # frozen_string_literal: true
-# Spike 3: probe オーバーヘッド計測用。HAYATE_PROBE_MODE=hook なら記録せずフックのみ
+# Spike 3: probe オーバーヘッド計測用。HAYAOKI_PROBE_MODE=hook なら記録せずフックのみ
 require "json"
-module HayateProbe
+module HayaokiProbe
   EVENTS = []
-  RECORD = ENV["HAYATE_PROBE_MODE"] != "hook"
+  RECORD = ENV["HAYAOKI_PROBE_MODE"] != "hook"
   CLOCK = Process::CLOCK_MONOTONIC
   @depth = 0
   class << self; attr_accessor :depth; end
 
   def require(name)
-    __hayate_track(name) { super }
+    __hayaoki_track(name) { super }
   end
 
   # require に委譲すると RubyGems の require を通って +45% になるため、
@@ -17,12 +17,12 @@ module HayateProbe
   def require_relative(name)
     base = caller_locations(1, 1).first.absolute_path or raise LoadError, "cannot infer basepath"
     path = File.expand_path(name, File.dirname(base))
-    __hayate_track(path) { gem_original_require(path) }
+    __hayaoki_track(path) { gem_original_require(path) }
   end
 
-  private def __hayate_track(name)
-    d = HayateProbe.depth
-    HayateProbe.depth = d + 1
+  private def __hayaoki_track(name)
+    d = HayaokiProbe.depth
+    HayaokiProbe.depth = d + 1
     t0 = Process.clock_gettime(CLOCK) if RECORD
     result = yield
     if RECORD
@@ -31,16 +31,16 @@ module HayateProbe
     end
     result
   ensure
-    HayateProbe.depth = d
+    HayaokiProbe.depth = d
   end
 
   def load(name, wrap = false)
     super
   end
 end
-Kernel.prepend(HayateProbe)
-Kernel.singleton_class.prepend(HayateProbe)
+Kernel.prepend(HayaokiProbe)
+Kernel.singleton_class.prepend(HayaokiProbe)
 at_exit do
-  File.write("/dev/null", JSON.generate(HayateProbe::EVENTS)) if HayateProbe::RECORD
-  File.write(ENV["HAYATE_COUNT_FILE"], HayateProbe::EVENTS.size.to_s) if ENV["HAYATE_COUNT_FILE"]
+  File.write("/dev/null", JSON.generate(HayaokiProbe::EVENTS)) if HayaokiProbe::RECORD
+  File.write(ENV["HAYAOKI_COUNT_FILE"], HayaokiProbe::EVENTS.size.to_s) if ENV["HAYAOKI_COUNT_FILE"]
 end

@@ -2,15 +2,15 @@
 
 # TZInfo.eager_load! のコストを測る (Rails の eager_load! initializer が production で呼ぶ)。
 # 使い方: ruby tzinfo_eager_load.rb [LABEL] [RUNS]
-#   HAYATE_TZ_DATA=ruby なら tzinfo-data (Ruby モジュール) を使う。それ以外は OS の zoneinfo。
+#   HAYAOKI_TZ_DATA=ruby なら tzinfo-data (Ruby モジュール) を使う。それ以外は OS の zoneinfo。
 # 各計測は新しいプロセスで行い、中央値を Markdown の表の行として出す。
 require "rbconfig"
 
-if ENV["HAYATE_TZ_CHILD"]
+if ENV["HAYAOKI_TZ_CHILD"]
   now = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) * 1000.0 }
   require "tzinfo"
-  require "tzinfo/data" if ENV["HAYATE_TZ_DATA"] == "ruby"
-  case ENV["HAYATE_TZ_CHILD"]
+  require "tzinfo/data" if ENV["HAYAOKI_TZ_DATA"] == "ruby"
+  case ENV["HAYAOKI_TZ_CHILD"]
   when "eager"
     # Rails と同じく DataSource.get と UTC を先に済ませてから eager_load! を測る
     TZInfo::DataSource.get
@@ -41,7 +41,7 @@ end
 label = ARGV[0] || RUBY_PLATFORM
 runs = (ARGV[1] || 7).to_i
 child = lambda do |mode|
-  out = IO.popen({ "HAYATE_TZ_CHILD" => mode }, [RbConfig.ruby, __FILE__], err: %i[child out], &:read)
+  out = IO.popen({ "HAYAOKI_TZ_CHILD" => mode }, [RbConfig.ruby, __FILE__], err: %i[child out], &:read)
   raise "#{mode}: #{out}" unless $?.success?
   out.strip
 end

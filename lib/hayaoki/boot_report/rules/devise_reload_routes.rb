@@ -2,7 +2,7 @@
 
 require_relative "base"
 
-module Hayate
+module Hayaoki
   module BootReport
     module Rules
       # Devise は before_eager_load で app.reload_routes! を呼ぶ (Devise.reload_routes = true が初期値)。

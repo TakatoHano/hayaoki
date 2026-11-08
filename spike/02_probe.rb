@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 # Spike 2: bootsnap + Zeitwerk 入りの Rails で Probe が計測を欠かさず共存できるか
 # 使い方: ruby -r./02_probe.rb -e 'require "./config/environment"'  (または boot 後に require)
-unless defined?(HayateProbe)
-  module HayateProbe
+unless defined?(HayaokiProbe)
+  module HayaokiProbe
     SING_REQUIRE = Kernel.method(:require).unbind
     PRE = $LOADED_FEATURES.dup  # probe 読込時点で既にロード済みの feature
     EVENTS = []   # [name, result, last_or_nil, depth]
@@ -13,9 +13,9 @@ unless defined?(HayateProbe)
 
     module Hook
       def require(name)
-        depth = (Thread.current[:hayate_d] ||= 0)
-        Thread.current[:hayate_d] = depth + 1
-        result = __hayate_next_require(name) { super }
+        depth = (Thread.current[:hayaoki_d] ||= 0)
+        Thread.current[:hayaoki_d] = depth + 1
+        result = __hayaoki_next_require(name) { super }
         last = result ? $LOADED_FEATURES.last : nil
         EVENTS << [name.to_s, result, last, depth]
         CAPTURED[last] = true if last
@@ -24,16 +24,16 @@ unless defined?(HayateProbe)
         EVENTS << [name.to_s, :raise, nil, depth]
         raise
       ensure
-        Thread.current[:hayate_d] = depth
+        Thread.current[:hayaoki_d] = depth
       end
 
       # Kernel.require (singleton) だけは super を使わず、prepend 前の元メソッドを直接呼ぶ。
       # 理由: Ruby 4.0 の bundled_gems.rb (replace_require) が singleton の require を
       # alias_method で退避するとき、先頭の Hook#require を退避してしまい、
       # 退避版内の super が "no superclass method 'require' for class #<Class:Kernel>" で落ちるため。
-      private def __hayate_next_require(name)
+      private def __hayaoki_next_require(name)
         if equal?(Kernel)
-          HayateProbe::SING_REQUIRE.bind_call(Kernel, name)
+          HayaokiProbe::SING_REQUIRE.bind_call(Kernel, name)
         else
           yield
         end
@@ -46,9 +46,9 @@ unless defined?(HayateProbe)
         RELATIVE << name
         base = caller_locations(1, 1).first.absolute_path or raise LoadError, "cannot infer basepath"
         path = File.expand_path(name, File.dirname(base))
-        return require(path) if HayateProbe::RR_VIA_REQUIRE
-        depth = (Thread.current[:hayate_d] ||= 0)
-        Thread.current[:hayate_d] = depth + 1
+        return require(path) if HayaokiProbe::RR_VIA_REQUIRE
+        depth = (Thread.current[:hayaoki_d] ||= 0)
+        Thread.current[:hayaoki_d] = depth + 1
         result = gem_original_require(path)
         last = result ? $LOADED_FEATURES.last : nil
         EVENTS << [path, result, last, depth, :rr]
@@ -58,7 +58,7 @@ unless defined?(HayateProbe)
         EVENTS << [path || name.to_s, :raise, nil, depth, :rr]
         raise
       ensure
-        Thread.current[:hayate_d] = depth if depth
+        Thread.current[:hayaoki_d] = depth if depth
       end
 
       def load(name, wrap = false)
@@ -96,7 +96,7 @@ unless defined?(HayateProbe)
       File.write(ENV["PROBE_MISSING_OUT"], missing.join("\n")) if ENV["PROBE_MISSING_OUT"]
     end
   end
-  Kernel.prepend(HayateProbe::Hook)
-  Kernel.singleton_class.prepend(HayateProbe::Hook)
-  at_exit { HayateProbe.report }
+  Kernel.prepend(HayaokiProbe::Hook)
+  Kernel.singleton_class.prepend(HayaokiProbe::Hook)
+  at_exit { HayaokiProbe.report }
 end

@@ -1,6 +1,6 @@
 # 技術スパイク記録
 
-hayate boot-report は Rails の boot 時間を計測するツールである。計測の中核となる probe は、Kernel に require / require_relative / load を prepend し、`ruby -r probe.rb` で bundler より先に読み込む方式を取る。本ドキュメントは、この方式が実際に成立するかを確かめるために行った技術スパイクの記録である。
+hayaoki boot-report は Rails の boot 時間を計測するツールである。計測の中核となる probe は、Kernel に require / require_relative / load を prepend し、`ruby -r probe.rb` で bundler より先に読み込む方式を取る。本ドキュメントは、この方式が実際に成立するかを確かめるために行った技術スパイクの記録である。
 
 ## スパイク1: require 直後の $LOADED_FEATURES.last で読み込んだファイルを特定できるか（spike/01_loaded_features.rb）
 

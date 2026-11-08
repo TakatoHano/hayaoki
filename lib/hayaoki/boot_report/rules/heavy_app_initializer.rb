@@ -2,7 +2,7 @@
 
 require_relative "base"
 
-module Hayate
+module Hayaoki
   module BootReport
     module Rules
       # アプリ自身の initializer (config/initializers 配下など) が重い。

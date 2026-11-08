@@ -1,13 +1,13 @@
 # frozen_string_literal: true
 
 require "optparse"
-require_relative "../hayate"
+require_relative "../hayaoki"
 require_relative "version"
 
-module Hayate
+module Hayaoki
   class CLI
     FORMATS = %w[text json speedscope].freeze
-    USAGE = "Usage: hayate boot-report [options] [APP_DIR]"
+    USAGE = "Usage: hayaoki boot-report [options] [APP_DIR]"
 
     def self.start(argv = ARGV, stdout: $stdout, stderr: $stderr)
       new(stdout: stdout, stderr: stderr).run(argv)
@@ -24,10 +24,10 @@ module Hayate
       cmd = argv.shift
       case cmd
       when "boot-report" then boot_report(argv)
-      when "--version", "-v", "version" then @out.puts("hayate #{Hayate::VERSION}"); 0
+      when "--version", "-v", "version" then @out.puts("hayaoki #{Hayaoki::VERSION}"); 0
       when nil, "-h", "--help", "help" then @out.puts(top_help); cmd.nil? ? 1 : 0
       else
-        @err.puts "hayate: unknown command '#{cmd}'\n#{top_help}"
+        @err.puts "hayaoki: unknown command '#{cmd}'\n#{top_help}"
         1
       end
     end
@@ -68,21 +68,21 @@ module Hayate
 
     private
 
-    def top_help = "#{USAGE}\n       hayate --version\n\nRun `hayate boot-report --help` for options."
+    def top_help = "#{USAGE}\n       hayaoki --version\n\nRun `hayaoki boot-report --help` for options."
 
     def boot_report(argv)
       opts, app_dir = begin
         parse(argv)
       rescue OptionParser::ParseError => e
-        @err.puts "hayate: #{e.message}\n#{USAGE}"
+        @err.puts "hayaoki: #{e.message}\n#{USAGE}"
         return 1
       end
       case opts[:action]
       when :help then @out.puts(@parser.help); return 0
-      when :version then @out.puts("hayate #{Hayate::VERSION}"); return 0
+      when :version then @out.puts("hayaoki #{Hayaoki::VERSION}"); return 0
       end
       unless File.directory?(app_dir)
-        @err.puts "hayate: APP_DIR not found: #{app_dir}"
+        @err.puts "hayaoki: APP_DIR not found: #{app_dir}"
         return 1
       end
 
@@ -96,7 +96,7 @@ module Hayate
         begin
           File.write(opts[:output], text)
         rescue SystemCallError => e
-          @err.puts "hayate: cannot write #{opts[:output]}: #{e.message}"
+          @err.puts "hayaoki: cannot write #{opts[:output]}: #{e.message}"
           return 1
         end
         @err.puts "wrote #{opts[:output]}"
@@ -108,11 +108,11 @@ module Hayate
       report_error(e, opts)
       1
     rescue Errno::ENOENT => e
-      @err.puts "hayate: could not start the child process (--ruby #{opts[:ruby].inspect}, APP_DIR #{app_dir.inspect}): #{e.message}"
+      @err.puts "hayaoki: could not start the child process (--ruby #{opts[:ruby].inspect}, APP_DIR #{app_dir.inspect}): #{e.message}"
       @err.puts "Check that the --ruby executable exists and is on PATH."
       1
     rescue SystemCallError => e
-      @err.puts "hayate: #{e.message}"
+      @err.puts "hayaoki: #{e.message}"
       1
     end
 
@@ -163,10 +163,10 @@ module Hayate
     def report_error(e, opts = {})
       case e.reason
       when :app_dir, :no_lockfile, :interrupted
-        @err.puts "hayate: #{e.message.lines.first.to_s.strip}"
+        @err.puts "hayaoki: #{e.message.lines.first.to_s.strip}"
         return
       end
-      @err.puts "hayate: boot failed (#{e.reason})"
+      @err.puts "hayaoki: boot failed (#{e.reason})"
       @err.puts e.message.lines.first.to_s.strip
       if e.probe_error
         @err.puts "error: #{e.probe_error["class"]}: #{e.probe_error["message"]}"
@@ -195,7 +195,7 @@ module Hayate
 end
 
 # --redact: render の結果 (text / json / speedscope) のパスを伏せる。既存の render を書き換えずに差し込む。
-module Hayate
+module Hayaoki
   module CLIRedact
     private
 

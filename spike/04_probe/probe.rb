@@ -1,17 +1,17 @@
 # frozen_string_literal: true
 # Spike 4-3: 設計書 docs/design/probe.md のプロトタイプ。alias chain 方式の require フック + 遅延インストール +
 # フラット配列記録 + 自前 JSON 書き出し。`ruby -r ./probe.rb -e 'require "./config/environment"'`
-# 出力先: ENV["HAYATE_PROBE_OUT"] (未設定なら stderr に件数だけ出す)
-unless defined?(::Hayate::Probe)
-module Hayate; end
-module Hayate::Probe
+# 出力先: ENV["HAYAOKI_PROBE_OUT"] (未設定なら stderr に件数だけ出す)
+unless defined?(::Hayaoki::Probe)
+module Hayaoki; end
+module Hayaoki::Probe
   CLOCK = Process::CLOCK_MONOTONIC
   T0 = Process.clock_gettime(CLOCK)
   T0_REAL = Process.clock_gettime(Process::CLOCK_REALTIME)
   CPU0 = Process.clock_gettime(Process::CLOCK_PROCESS_CPUTIME_ID)
   PID = Process.pid
-  OUT = ENV.delete("HAYATE_PROBE_OUT")
-  SPAWN_AT = ENV.delete("HAYATE_SPAWN_AT")
+  OUT = ENV.delete("HAYAOKI_PROBE_OUT")
+  SPAWN_AT = ENV.delete("HAYAOKI_SPAWN_AT")
   PRE_FEATURES = $LOADED_FEATURES.size
   # 1 span = 7 スロット: kind, name, parent_index, t_start, t_end, feature/meta, thread_id
   W = 7
@@ -24,7 +24,7 @@ module Hayate::Probe
 
   def self.stack
     t = Thread.current
-    t.equal?(MAIN) ? STACK : (t.thread_variable_get(:__hayate_stack) || t.thread_variable_set(:__hayate_stack, []))
+    t.equal?(MAIN) ? STACK : (t.thread_variable_get(:__hayaoki_stack) || t.thread_variable_set(:__hayaoki_stack, []))
   end
 
   # yield の前後で span を開閉する。戻り値 / 例外はそのまま通す。
@@ -75,48 +75,48 @@ module Hayate::Probe
   end
 
   module InitializerHook
-    def run(*args) = Hayate::Probe.span(KIND_INIT, name.to_s, @context.class.name) { super }
+    def run(*args) = Hayaoki::Probe.span(KIND_INIT, name.to_s, @context.class.name) { super }
   end
   module OnLoadHook
     private def execute_hook(name, base, options, block)
       loc = block.source_location
-      Hayate::Probe.span(KIND_ONLOAD, name.to_s, loc && "#{loc[0]}:#{loc[1]}") { super }
+      Hayaoki::Probe.span(KIND_ONLOAD, name.to_s, loc && "#{loc[0]}:#{loc[1]}") { super }
     end
   end
   module EagerLoadHook
-    def eager_load(...) = Hayate::Probe.span(KIND_EAGER, tag.to_s) { super }
+    def eager_load(...) = Hayaoki::Probe.span(KIND_EAGER, tag.to_s) { super }
   end
   module BundlerHook
-    def require(*groups) = Hayate::Probe.span(KIND_BUNDLER, "Bundler.require") { super }
+    def require(*groups) = Hayaoki::Probe.span(KIND_BUNDLER, "Bundler.require") { super }
   end
   module AppHook
-    def initialize!(...) = Hayate::Probe.span(KIND_PHASE, "initialize!") { super }
+    def initialize!(...) = Hayaoki::Probe.span(KIND_PHASE, "initialize!") { super }
   end
 
   # ---- require / load (alias chain)。prepend は使わない (docs/design/probe.md §1.3)
-  BUILTIN_REQUIRE = Kernel.private_method_defined?(:gem_original_require) ? :gem_original_require : :__hayate_require
+  BUILTIN_REQUIRE = Kernel.private_method_defined?(:gem_original_require) ? :gem_original_require : :__hayaoki_require
   [Kernel, Kernel.singleton_class].each do |k|
     k.class_eval do
-      alias_method :__hayate_require, :require
+      alias_method :__hayaoki_require, :require
       alias_method :require, :require
-      def require(path) = Hayate::Probe.span(KIND_REQUIRE, path) { __hayate_require(path) }
-      alias_method :__hayate_load, :load
+      def require(path) = Hayaoki::Probe.span(KIND_REQUIRE, path) { __hayaoki_require(path) }
+      alias_method :__hayaoki_load, :load
       alias_method :load, :load
-      def load(path, wrap = false) = Hayate::Probe.span(KIND_LOAD, path) { __hayate_load(path, wrap) }
+      def load(path, wrap = false) = Hayaoki::Probe.span(KIND_LOAD, path) { __hayaoki_load(path, wrap) }
     end
   end
   # require_relative も Kernel に直接定義する。Kernel への prepend は bootsnap の load path cache と組み合わさると
   # boot を数%遅くするため使わない (spike/04_probe/bench.sh, probe.md §1.4)。元メソッドは基準パスが正しく解決されないので呼ばない。
   ::Kernel.module_eval do
-    alias_method :__hayate_require_relative, :require_relative
+    alias_method :__hayaoki_require_relative, :require_relative
     alias_method :require_relative, :require_relative
     def require_relative(path)
       base = caller_locations(1, 1).first&.absolute_path or raise LoadError, "cannot infer basepath"
       abs = File.expand_path(path, File.dirname(base))
-      Hayate::Probe.span(Hayate::Probe::KIND_RR, abs) { send(Hayate::Probe::BUILTIN_REQUIRE, abs) }
+      Hayaoki::Probe.span(Hayaoki::Probe::KIND_RR, abs) { send(Hayaoki::Probe::BUILTIN_REQUIRE, abs) }
     end
   end
-  Kernel.send(:private, :require, :__hayate_require, :load, :__hayate_load, :require_relative, :__hayate_require_relative)
+  Kernel.send(:private, :require, :__hayaoki_require, :load, :__hayaoki_load, :require_relative, :__hayaoki_require_relative)
 
   # ---- 書き出し (依存ゼロの最小 JSON)
   def self.j(v)
@@ -156,7 +156,7 @@ module Hayate::Probe
       File.write("#{OUT}.tmp", data)
       File.rename("#{OUT}.tmp", OUT)
     else
-      $stderr.puts "[hayate probe] status=#{status} spans=#{EV.size / W} bytes=#{data.bytesize}"
+      $stderr.puts "[hayaoki probe] status=#{status} spans=#{EV.size / W} bytes=#{data.bytesize}"
     end
   end
 end

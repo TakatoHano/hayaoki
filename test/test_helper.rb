@@ -8,7 +8,7 @@ require "fileutils"
 require "rbconfig"
 
 ROOT = File.expand_path("..", __dir__)
-PROBE = File.join(ROOT, "lib/hayate/probe.rb")
+PROBE = File.join(ROOT, "lib/hayaoki/probe.rb")
 FIXTURES = File.join(__dir__, "fixtures")
 # CI ランナー (特に macOS) は時間のばらつきが大きいので、上限側の許容幅を広げる
 TIMING_SLACK = ENV["CI"] ? (RUBY_PLATFORM.include?("darwin") ? 4 : 2) : 1
@@ -16,7 +16,7 @@ TIMING_SLACK = ENV["CI"] ? (RUBY_PLATFORM.include?("darwin") ? 4 : 2) : 1
 # 子プロセスに bundle exec 由来の環境を持ち込まない (probe を -r で先頭に読ませるため)
 CLEAN_ENV = {
   "RUBYOPT" => nil, "RUBYLIB" => nil, "BUNDLE_GEMFILE" => nil, "BUNDLE_BIN_PATH" => nil,
-  "BUNDLER_SETUP" => nil, "BUNDLER_VERSION" => nil, "HAYATE_PROBE_OUT" => nil, "HAYATE_SPAWN_AT" => nil,
+  "BUNDLER_SETUP" => nil, "BUNDLER_VERSION" => nil, "HAYAOKI_PROBE_OUT" => nil, "HAYAOKI_SPAWN_AT" => nil,
 }.freeze
 
 # probe の出力 JSON を木として扱うテスト用の補助 (親側の集計の実装ではない)
@@ -57,12 +57,12 @@ module ProbeHelper
     def report = data && ProbeReport.new(data)
   end
 
-  # ruby [ruby_args] -r probe -e code を実行する。HAYATE_PROBE_OUT の中身は data に JSON として入る。
+  # ruby [ruby_args] -r probe -e code を実行する。HAYAOKI_PROBE_OUT の中身は data に JSON として入る。
   def run_probe(code, ruby_args: [], env: {}, chdir: File.join(FIXTURES, "edge"), probe_args: [PROBE])
-    Dir.mktmpdir("hayate-probe") do |dir|
+    Dir.mktmpdir("hayaoki-probe") do |dir|
       out = File.join(dir, "out.json")
       cmd = [RbConfig.ruby, *ruby_args, *probe_args.map { |p| "-r#{p}" }, "-e", code]
-      so, se, st = Open3.capture3(CLEAN_ENV.merge("HAYATE_PROBE_OUT" => out).merge(env), *cmd, chdir: chdir)
+      so, se, st = Open3.capture3(CLEAN_ENV.merge("HAYAOKI_PROBE_OUT" => out).merge(env), *cmd, chdir: chdir)
       data = File.exist?(out) ? JSON.parse(File.read(out)) : nil
       tmp_left = File.exist?("#{out}.tmp")
       refute tmp_left, "tmp file must be renamed away"
@@ -73,7 +73,7 @@ end
 
 # fixture の Rails アプリを tmp に複製し、古い Gemfile.lock を消してから、ローカルの gem だけで lock を作り直す。
 # [app_dir, lock_error(失敗時の出力。成功なら nil)] を返す。tmp は終了時に消す。
-def prepare_rails_min_app(prefix = "hayate-app")
+def prepare_rails_min_app(prefix = "hayaoki-app")
   tmp = Dir.mktmpdir(prefix)
   Minitest.after_run { FileUtils.rm_rf(tmp) }
   FileUtils.cp_r(File.join(FIXTURES, "apps/rails_min"), tmp)

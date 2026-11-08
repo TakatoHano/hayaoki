@@ -105,10 +105,10 @@ class ProbeEdgeTest < Minitest::Test
   end
 
   def test_sigterm_returns_error_and_marks_where_it_stopped
-    Dir.mktmpdir("hayate-sigterm") do |dir|
+    Dir.mktmpdir("hayaoki-sigterm") do |dir|
       ready = File.join(dir, "ready")
       out = File.join(dir, "out.json")
-      env = CLEAN_ENV.merge("HAYATE_PROBE_OUT" => out, "READY_FILE" => ready)
+      env = CLEAN_ENV.merge("HAYAOKI_PROBE_OUT" => out, "READY_FILE" => ready)
       pid = Process.spawn(env, RbConfig.ruby, "-r#{PROBE}", "-e", 'require "./t_forever"',
                           chdir: File.join(FIXTURES, "edge"), out: File::NULL, err: File::NULL)
       60.times { break if File.exist?(ready); sleep 0.1 }

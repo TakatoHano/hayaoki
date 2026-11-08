@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Spike 4-3: シンボリックリンク経由のディレクトリで require_relative の基準パスがネイティブと一致するか
-P=/path/to/home/workspace/hayate/spike/04_probe/probe.rb
+P=/path/to/home/workspace/hayaoki/spike/04_probe/probe.rb
 D=/tmp/hayaoki-spike/symt
 rm -rf $D; mkdir -p $D/real/sub
 echo 'puts "real target"' > $D/real/target.rb

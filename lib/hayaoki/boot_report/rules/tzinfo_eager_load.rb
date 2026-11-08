@@ -2,7 +2,7 @@
 
 require_relative "base"
 
-module Hayate
+module Hayaoki
   module BootReport
     module Rules
       # Rails は active_support.initialize_time_zone で TZInfo を eager_load_namespaces に加え、

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "rule_helper"
-require "hayate/boot_report/rules/tzinfo_eager_load"
+require "hayaoki/boot_report/rules/tzinfo_eager_load"
 
 class TzinfoEagerLoadTest < Minitest::Test
   include RuleHelper

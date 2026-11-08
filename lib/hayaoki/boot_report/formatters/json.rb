@@ -4,7 +4,7 @@ require "json"
 require_relative "../../version"
 require_relative "../advisor"
 
-module Hayate
+module Hayaoki
   module BootReport
     module Formatters
       class Json
@@ -27,7 +27,7 @@ module Hayate
           reports = { reports.condition.to_s => reports } unless reports.is_a?(Hash)
           reports = reports.transform_values { |r| scrub(r.to_h) }
           reports = reports.transform_values { |r| scrub(r.to_h) }
-          doc = { "schema_version" => SCHEMA_VERSION, "hayate_version" => Hayate::VERSION,
+          doc = { "schema_version" => SCHEMA_VERSION, "hayaoki_version" => Hayaoki::VERSION,
                   "reports" => reports }
           if @suggestions
             doc["suggestions"] = @suggestions.map { |s| s.respond_to?(:to_h) ? s.to_h : s }

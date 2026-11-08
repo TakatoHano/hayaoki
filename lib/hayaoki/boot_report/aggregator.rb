@@ -2,7 +2,7 @@
 
 require_relative "report"
 
-module Hayate
+module Hayaoki
   module BootReport
     # probe の payload (Runner が集めた複数回分) を、設計書 §3.4 の正規化をかけた木にして集計する。
     # 時間はすべて ms。各指標は { "median", "min", "max" } (偶数個なら中央2つの平均)。

@@ -4,7 +4,7 @@ require "set"
 require_relative "base"
 require_relative "dev_gems_in_production"
 
-module Hayate
+module Hayaoki
   module BootReport
     module Rules
       # 重い gem の定数が app/ config/ lib/ から参照されていない (require: false の候補)。

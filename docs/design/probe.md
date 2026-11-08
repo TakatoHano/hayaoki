@@ -1,6 +1,6 @@
 # probe / recorder 詳細設計
 
-- 対象: `hayate boot-report` の子プロセス側（probe）と、span を記録して親へ渡す部分（recorder）
+- 対象: `hayaoki boot-report` の子プロセス側（probe）と、span を記録して親へ渡す部分（recorder）
 - 対象環境: Ruby 3.2 以上、Rails 7.0 以上。検証は Ruby 4.0.6 / Bundler 4.0.16 / Rails 8.1.4 / bootsnap 1.26.1 / Zeitwerk 2.8.3 で行った
 - 根拠となる実験: `spike/04_alias/`（require フック方式の比較）と `spike/04_probe/`（本設計のプロトタイプ）。結果は付録 A にまとめた
 
@@ -59,16 +59,16 @@ bindcall と callee は、暗黙の名前空間を持たない小さなアプリ
 ```ruby
 [::Kernel, ::Kernel.singleton_class].each do |k|
   k.class_eval do
-    alias_method :__hayate_require, :require
+    alias_method :__hayaoki_require, :require
     alias_method :require, :require          # -w での再定義警告を抑止（bootsnap と同じ手法）
-    def require(path) ... __hayate_require(path) ... end
+    def require(path) ... __hayaoki_require(path) ... end
   end
 end
 ```
 
 この方式が失敗しにくい理由は次のとおり。
 
-- **名前で呼ぶので super に依存しない。** 後から誰かが alias で退避すると、複製されるのは probe のラッパーである。複製の中身は `__hayate_require` を名前で呼ぶだけなので、どこに複製されても正しく動く。bundled_gems の交差した配線でも、どの呼び出しも probe のラッパーをちょうど1回通る（付録 A-4 で実際のスタックを確認した）。
+- **名前で呼ぶので super に依存しない。** 後から誰かが alias で退避すると、複製されるのは probe のラッパーである。複製の中身は `__hayaoki_require` を名前で呼ぶだけなので、どこに複製されても正しく動く。bundled_gems の交差した配線でも、どの呼び出しも probe のラッパーをちょうど1回通る（付録 A-4 で実際のスタックを確認した）。
 - **後から入る上書きを消さない。** probe はチェーンの一番内側に入るので、外側の bootsnap、Zeitwerk、bundled_gems の処理はすべて実行される。bundled_gems の警告も残る。
 - **後から prepend されても動く。** 他のライブラリが後で Kernel に prepend しても、`super` で origin に来ればチェーンをたどる。
 - **バージョン差の影響を受けにくい。** Ruby 3.2 には `bundled_gems.rb` が無く（3.3 で追加）、Bundler 2.4 系も `replace_require` を呼ばない。これらの環境ではチェーンが短くなるだけで、probe のコードは変わらない。依存しているのは `alias_method` と再定義という Ruby 1.x 以来の挙動だけである。
@@ -89,7 +89,7 @@ end
 
 `require_relative` は誰も alias しないので、spike では Kernel に prepend していた。しかし、**`Kernel.prepend` は中身が空でも bootsnap の load path cache が有効なときに boot を遅くする**（付録 A-3: 空のモジュールで +24〜60ms。load path cache を無効にすると差は消える）。原因は特定していない。Kernel の origin が作られることで、bootsnap の Ruby 実装の require がメソッドを探索する処理が遅くなると推測している。
 
-対策として、`require_relative` も Kernel に直接定義し直す（`__hayate_require_relative` に退避するだけで、元のメソッドは呼ばない）。この変更で、プロトタイプのオーバーヘッドは +12.0% から +1.4% に下がった。
+対策として、`require_relative` も Kernel に直接定義し直す（`__hayaoki_require_relative` に退避するだけで、元のメソッドは呼ばない）。この変更で、プロトタイプのオーバーヘッドは +12.0% から +1.4% に下がった。
 
 委譲先は `gem_original_require` とする。事実2のとおり、`require` に委譲すると遅くなるうえに boot が失敗する。失敗の根本原因は未検証だが、RubyGems の require が既定 gem のファイルを require したときに spec を activate し、Bundler.setup と衝突するためだと推測している。
 
@@ -180,8 +180,8 @@ boot の終了時刻は at_exit の時刻ではなく、**main スレッドの�
 
 ### 3.3 マルチスレッド
 
-- スタックは**スレッドごと**に持つ。main スレッドでは定数 `MAIN_STACK` を直接使い（高速な方法）、それ以外のスレッドでは `Thread#thread_variable_get(:__hayate_stack)` を使う。`Thread.current[]` は fiber ローカルなので使わない。
-- 記録配列 `EV` はメインスレッドだけが使う。main 以外のスレッドは、スレッドごとのバッファ（`Thread#thread_variable_get(:__hayate_buf)`）に記録する。バッファの一覧 `BUFFERS` は `BUF_LOCK` で保護して登録する。書き出し時に `EV` の後ろへ各バッファを結合し、親の添字はバッファ内の位置からずらす（`Hayate::Probe.events`）。1 span ぶんの追記は**1回の `Array#push(複数の引数)`** で行う（バッファ内でも同じ）。
+- スタックは**スレッドごと**に持つ。main スレッドでは定数 `MAIN_STACK` を直接使い（高速な方法）、それ以外のスレッドでは `Thread#thread_variable_get(:__hayaoki_stack)` を使う。`Thread.current[]` は fiber ローカルなので使わない。
+- 記録配列 `EV` はメインスレッドだけが使う。main 以外のスレッドは、スレッドごとのバッファ（`Thread#thread_variable_get(:__hayaoki_buf)`）に記録する。バッファの一覧 `BUFFERS` は `BUF_LOCK` で保護して登録する。書き出し時に `EV` の後ろへ各バッファを結合し、親の添字はバッファ内の位置からずらす（`Hayaoki::Probe.events`）。1 span ぶんの追記は**1回の `Array#push(複数の引数)`** で行う（バッファ内でも同じ）。
 - span には `tid` を記録する（main は 0、それ以外は `Thread#object_id`）。親では main 以外の span を「background threads」という別の根として表示し、boot 全体の合計（クリティカルパス）には含めない。
 - 注意: 時間はすべて wall clock なので、並行するスレッドが GVL を奪った時間も main の span に入る。require の loading lock を待つ時間も含まれる。親はスレッドの span が1件でもあれば「並行実行あり、時間の帰属は近似」と注記する。
 - Fiber の中で require された場合は、そのスレッドのスタックに積まれる。Fiber を切り替えながら require が交互に進むと入れ子の関係が崩れるが、boot 中にはまず起きないので許容する。
@@ -225,7 +225,7 @@ boot の終了時刻は at_exit の時刻ではなく、**main スレッドの�
 | GC | `GC.stat(:time)` と `GC.count` を probe の開始時と終了時に取る | GC チューニングのルールの材料（span ごとには取らない） |
 
 - CPU 時間は、initializer、on_load、eager_load、phase の span（数百件）でだけ取る。require の span（数千件）では取らない。開始値はメソッドのローカル変数に持ち、閉じるときに差分だけを記録する。
-- 親から子へは `HAYATE_SPAWN_AT`（realtime の Float 文字列）を渡す。VM の起動時間は `t0_real - spawn_at` で推定する。親は同じ ruby で `ruby -e ''` を数回実行した値も参考として表示する。
+- 親から子へは `HAYAOKI_SPAWN_AT`（realtime の Float 文字列）を渡す。VM の起動時間は `t0_real - spawn_at` で推定する。親は同じ ruby で `ruby -e ''` を数回実行した値も参考として表示する。
 
 ### 4.2 記録形式（フラットな配列）
 
@@ -252,11 +252,11 @@ EV = []   # 1 span = W(=8) スロット
 
 ### 5.1 出力先
 
-- **環境変数 `HAYATE_PROBE_OUT` で渡したファイルパスに書き出す。** 親は `Dir.mktmpdir` の中に run ごとのファイル名を用意する。
+- **環境変数 `HAYAOKI_PROBE_OUT` で渡したファイルパスに書き出す。** 親は `Dir.mktmpdir` の中に run ごとのファイル名を用意する。
   - pipe（fd 3 などの継承）は採用しない。アプリが fd を閉じたりデーモン化したりすると失敗しやすく、親が読み出しを並行させる必要もあるため。
   - stdout と stderr はアプリのログと一緒になるので使わない。親はこれらを上限付きで捕捉し、失敗時の表示にだけ使う。
 - 書き出しは `"#{OUT}.tmp"` に書いてから `File.rename` する。途中で kill されても、不完全な JSON を親が読まないようにするためである。
-- probe は起動時に `ENV.delete("HAYATE_PROBE_OUT")` と `ENV.delete("HAYATE_SPAWN_AT")` を実行し、値は定数に保持する。子孫のプロセスへの引き継ぎと、アプリから見える副作用を最小にするためである。
+- probe は起動時に `ENV.delete("HAYAOKI_PROBE_OUT")` と `ENV.delete("HAYAOKI_SPAWN_AT")` を実行し、値は定数に保持する。子孫のプロセスへの引き継ぎと、アプリから見える副作用を最小にするためである。
 - **pid のガード**: probe の読み込み時の `Process.pid` を保持し、at_exit で一致したときだけ書く。boot 中に fork した子（spring、preload、`Process.fork` を使う initializer など）が結果を上書きしないようにするためである（edge テストで確認済み）。
 
 ### 5.2 at_exit と部分結果
@@ -315,22 +315,22 @@ EV = []   # 1 span = W(=8) スロット
 
 ### 6.1 構成
 
-- `lib/hayate/probe.rb` の**1ファイル**。依存は0で、Ruby 3.2 の構文で書く（`it` やパターンマッチの新しい機能は使わない）。
-- `lib/hayate.rb` からは require しない。Runner は `File.expand_path("hayate/probe.rb", __dir__)` の絶対パスを `-r` に渡す。gem をインストールしたディレクトリにあるので、Gemfile に追加しなくても読み込める。
-- 冒頭を `return if defined?(::Hayate::Probe::INSTALLED)` とし、二重に読み込まれても何もしない（アプリの Gemfile に hayate が入っている場合への備え）。
+- `lib/hayaoki/probe.rb` の**1ファイル**。依存は0で、Ruby 3.2 の構文で書く（`it` やパターンマッチの新しい機能は使わない）。
+- `lib/hayaoki.rb` からは require しない。Runner は `File.expand_path("hayaoki/probe.rb", __dir__)` の絶対パスを `-r` に渡す。gem をインストールしたディレクトリにあるので、Gemfile に追加しなくても読み込める。
+- 冒頭を `return if defined?(::Hayaoki::Probe::INSTALLED)` とし、二重に読み込まれても何もしない（アプリの Gemfile に hayaoki が入っている場合への備え）。
 
 ### 6.2 擬似コード
 
 ```ruby
 # frozen_string_literal: true
-module Hayate; end              # gem 本体と同じく module（class にはしない）
-module Hayate::Probe
+module Hayaoki; end              # gem 本体と同じく module（class にはしない）
+module Hayaoki::Probe
   CLOCK = Process::CLOCK_MONOTONIC
   T0 = Process.clock_gettime(CLOCK); T0_REAL = ...; CPU0 = ...; PID = Process.pid
-  OUT = ENV.delete("HAYATE_PROBE_OUT"); SPAWN_AT = ENV.delete("HAYATE_SPAWN_AT")
+  OUT = ENV.delete("HAYAOKI_PROBE_OUT"); SPAWN_AT = ENV.delete("HAYAOKI_SPAWN_AT")
   W = 8; EV = []; MAIN = Thread.main; MAIN_STACK = []
   K_REQ = 0; K_RR = 1; K_LOAD = 2; K_INIT = 3; K_ONLOAD = 4; K_HOOKS = 5; K_EAGER = 6; K_PHASE = 7
-  BUILTIN_REQUIRE = Kernel.private_method_defined?(:gem_original_require) ? :gem_original_require : :__hayate_require
+  BUILTIN_REQUIRE = Kernel.private_method_defined?(:gem_original_require) ? :gem_original_require : :__hayaoki_require
   @on = true
 
   # --- recorder（ホットパス。ブロックを使わず、フレームも増やさない）
@@ -342,7 +342,7 @@ module Hayate::Probe
   # --- 粗い span 用（ブロック版。initializer、on_load などの数百件だけで使う）
   def self.span(kind, name, meta) { ... } -> 戻り値はブロックの値
 
-  # --- Rails 関連のフック（prepend 用。すべて Hayate::Probe の下に閉じ込める）
+  # --- Rails 関連のフック（prepend 用。すべて Hayaoki::Probe の下に閉じ込める）
   module InitializerHook; def run(*args) = Probe.span(K_INIT, name.to_s, ...) { super }; end
   module LoadHooksHook
     def run_load_hooks(name, base = Object) = Probe.span(K_HOOKS, name.to_s, ...) { super }
@@ -361,42 +361,42 @@ end
 # --- Kernel（alias chain）
 [Kernel, Kernel.singleton_class].each do |k|
   k.class_eval do
-    alias_method :__hayate_require, :require; alias_method :require, :require
+    alias_method :__hayaoki_require, :require; alias_method :require, :require
     def require(path)
-      i = Hayate::Probe.enter(0, path)          # 0 = K_REQ
+      i = Hayaoki::Probe.enter(0, path)          # 0 = K_REQ
       ok = false
-      r = __hayate_require(path)
+      r = __hayaoki_require(path)
       ok = true
       r
     ensure
-      Hayate::Probe.leave(i, 0, ok ? (r && $LOADED_FEATURES.last) : :raised) if i
+      Hayaoki::Probe.leave(i, 0, ok ? (r && $LOADED_FEATURES.last) : :raised) if i
     end
     # load も同じ形。引数は (path, wrap = false)
   end
 end
 Kernel.module_eval do
-  alias_method :__hayate_require_relative, :require_relative; alias_method :require_relative, :require_relative
+  alias_method :__hayaoki_require_relative, :require_relative; alias_method :require_relative, :require_relative
   def require_relative(path)
     base = caller_locations(1, 1).first&.absolute_path or raise LoadError, "cannot infer basepath"
     abs = File.expand_path(path, File.dirname(base))
-    # 以降は require と同じ enter/leave の形で send(Hayate::Probe::BUILTIN_REQUIRE, abs) に委譲する
+    # 以降は require と同じ enter/leave の形で send(Hayaoki::Probe::BUILTIN_REQUIRE, abs) に委譲する
   end
-  private :require, :load, :require_relative, :__hayate_require, :__hayate_load, :__hayate_require_relative
+  private :require, :load, :require_relative, :__hayaoki_require, :__hayaoki_load, :__hayaoki_require_relative
 end
-at_exit { Hayate::Probe.write! }
-Hayate::Probe::INSTALLED = true
+at_exit { Hayaoki::Probe.write! }
+Hayaoki::Probe::INSTALLED = true
 ```
 
-- **ホットパスを inline 化する理由**: プロトタイプのブロック版 `span { }` は利用者のバックトレースに require 1回あたり3フレーム（`Kernel#require`、`block in Kernel#require`、`Hayate::Probe.span`）を追加する。enter と leave の形にすれば1フレームで済み、メソッド呼び出しとブロックの生成も減る。bundled_gems の `uplevel` 計算や ActiveSupport::Deprecation が `caller` から呼び出し元を推定する処理への影響も小さくなる。
+- **ホットパスを inline 化する理由**: プロトタイプのブロック版 `span { }` は利用者のバックトレースに require 1回あたり3フレーム（`Kernel#require`、`block in Kernel#require`、`Hayaoki::Probe.span`）を追加する。enter と leave の形にすれば1フレームで済み、メソッド呼び出しとブロックの生成も減る。bundled_gems の `uplevel` 計算や ActiveSupport::Deprecation が `caller` から呼び出し元を推定する処理への影響も小さくなる。
 
 ### 6.3 名前空間の汚染を最小にする方針
 
 | 追加するもの | 範囲 |
 |---|---|
-| 定数 | `::Hayate` と `::Hayate::Probe` のみ。フック用のモジュールは `Hayate::Probe::*` の下に置く |
-| Kernel のメソッド | private の `__hayate_require`、`__hayate_load`、`__hayate_require_relative`（instance と singleton。`require_relative` は instance のみ）。名前は RubyGems の `gem_original_require` にならった |
+| 定数 | `::Hayaoki` と `::Hayaoki::Probe` のみ。フック用のモジュールは `Hayaoki::Probe::*` の下に置く |
+| Kernel のメソッド | private の `__hayaoki_require`、`__hayaoki_load`、`__hayaoki_require_relative`（instance と singleton。`require_relative` は instance のみ）。名前は RubyGems の `gem_original_require` にならった |
 | prepend 先 | §2.1 の H4〜H9 だけ。追加するのは `super` を呼ぶだけの公開メソッドで、インスタンス変数は追加しない |
-| その他 | グローバル変数は使わない。スレッド変数は `:__hayate_stack`（スタック）と `:__hayate_buf`（スレッドごとの記録バッファ）の2つ。環境変数は読み込み時に削除する |
+| その他 | グローバル変数は使わない。スレッド変数は `:__hayaoki_stack`（スタック）と `:__hayaoki_buf`（スレッドごとの記録バッファ）の2つ。環境変数は読み込み時に削除する |
 | 書き出し時に読む情報 | `Gem.loaded_specs` と `Rails.root` は `defined?` と `respond_to?` で確認してから読む。autoload を引き起こす参照（`Rails.application.config` など）は行わない |
 
 ---
@@ -405,11 +405,11 @@ Hayate::Probe::INSTALLED = true
 
 | ケース | 扱い |
 |---|---|
-| `--disable-gems` | `gem_original_require` が無いので、`BUILTIN_REQUIRE = :__hayate_require`（builtin の退避先）にする。後で `require "rubygems"` されると、RubyGems の `alias_method :gem_original_require, :require` は probe のラッパーを退避するが、名前で呼ぶので正しく動く（edge テストで確認済み）。親が `--disable-gems` で起動することは無いが、`RUBYOPT` にこれが含まれていても動く |
+| `--disable-gems` | `gem_original_require` が無いので、`BUILTIN_REQUIRE = :__hayaoki_require`（builtin の退避先）にする。後で `require "rubygems"` されると、RubyGems の `alias_method :gem_original_require, :require` は probe のラッパーを退避するが、名前で呼ぶので正しく動く（edge テストで確認済み）。親が `--disable-gems` で起動することは無いが、`RUBYOPT` にこれが含まれていても動く |
 | `gem_original_require` が無い（RubyGems の仕様変更） | 上と同じ代替先に切り替える。`probe_warnings` に記録する |
 | bootsnap | 無効にしない。warm cache の状態が実際の運用に近いので、Runner は1回目を捨てるウォームアップを推奨する。cold 計測は Runner が `BOOTSNAP_CACHE_DIR` を run ごとの tmp にして行う（probe は関与しない）。bootsnap の有無はどちらでもオーバーヘッドが約 +1.3% だった |
 | Spring | `-e "require './config/environment'"` は binstub を通らないので Spring は介在しない。念のため Runner は `DISABLE_SPRING=1` を付ける。`Bundler.require` で spring gem が読み込まれても、Spring のクライアントは起動しない |
-| `RUBYOPT` の継承 | probe は `RUBYOPT` を使わずに `-r` で読み込まれるので、子孫プロセスには載らない。利用者の `RUBYOPT`（`with_unbundled_env` が復元する元の値）は尊重し、その `-r` は probe より後に処理されるので計測できる。`HAYATE_*` は probe が削除する。boot 中に `exec` で別の ruby に置き換わる構成（Bundler の再 exec など）では結果が出ない。親はこれを「結果なし」として検出し、案内を出す |
+| `RUBYOPT` の継承 | probe は `RUBYOPT` を使わずに `-r` で読み込まれるので、子孫プロセスには載らない。利用者の `RUBYOPT`（`with_unbundled_env` が復元する元の値）は尊重し、その `-r` は probe より後に処理されるので計測できる。`HAYAOKI_*` は probe が削除する。boot 中に `exec` で別の ruby に置き換わる構成（Bundler の再 exec など）では結果が出ない。親はこれを「結果なし」として検出し、案内を出す |
 | fork | §5.1 の pid ガードで対応する |
 | Rails 以外の Bundler アプリ | probe はフレームワークに依存しない。Rails のフックはインストールされずに `pending_hooks` に残るだけで、require と Bundler.require の span は取れる。Runner 側で起動コマンドを `-e "require 'bundler/setup'; Bundler.require"` または `--entry FILE` に切り替えられるようにする |
 | `Kernel.require` を直接呼ぶコード | singleton の alias chain で捕捉できる（Bundler.require もこの呼び出しを通る） |
@@ -476,7 +476,7 @@ Hayate::Probe::INSTALLED = true
 1. **Ruby 3.2〜3.4 での動作は未検証。** 今回の環境には Ruby 4.0 しか無い。alias chain は古い挙動にしか依存していないので失敗しにくいと考えるが、3.3 の `replace_require` の実装差、Zeitwerk 2.6 の core_ext、`caller_locations` の `absolute_path` が realpath を返すかは、§8.4 のマトリクスで最初に確認する。
 2. **`Kernel.prepend` が遅くなる原因は特定していない。** 「prepend しない」で回避したが、H4〜H9 の prepend（Kernel 以外）が同じ性質を持たないかは計測で確認する。プロトタイプ全体では +1.4% だったので、現状は問題ない。
 3. **`define_method :require` で（alias せずに）上書きするライブラリ。** フックが外れて計測が欠ける。boot は失敗しない。§1.3 の検出ロジックで警告を出す。実在するかは gem コーパス（上位 1000 gem）を grep して調べる。
-4. **H4〜H9 の対象メソッドを alias chain するライブラリ。** prepend 本体が複製されて `super` が失敗する、という同じ種類の問題が起こりうる。現時点では見つかっていないが、3 と同じく調査する。保険として、Rails 関連のフックだけを無効にする環境変数（`HAYATE_PROBE_HOOKS=require`）を用意する。
+4. **H4〜H9 の対象メソッドを alias chain するライブラリ。** prepend 本体が複製されて `super` が失敗する、という同じ種類の問題が起こりうる。現時点では見つかっていないが、3 と同じく調査する。保険として、Rails 関連のフックだけを無効にする環境変数（`HAYAOKI_PROBE_HOOKS=require`）を用意する。
 5. **Rails のメソッドシグネチャの変化。** `execute_hook(name, base, options, block)` と `Initializer#run(*args)` は 7.0〜8.1 で同じことを 8.1 のソースで確認したが、7.0 のソースではまだ確認していない。フックの引数を `(...)` で受けて、内部の参照を最小にすることでも防ぐ。
 6. **事実2の `Bundler::GemNotFound` の根本原因は未特定。** 本設計では `gem_original_require` に委譲するので発生しないが、`--disable-gems` で後から RubyGems が読み込まれる方法などで再発しないか、8.2 の4番で確認する。
 7. **時間の帰属の限界。** bootsnap と Zeitwerk のラッパー処理、Zeitwerk の `on_load` コールバック、スレッドの並行実行の時間は、親 span の self time に入る。レポートで注記する。

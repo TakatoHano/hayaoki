@@ -2,7 +2,7 @@
 
 require_relative "base"
 
-module Hayate
+module Hayaoki
   module BootReport
     module Rules
       # eager_load の割合が大きいときの判断材料 (情報のみ)。

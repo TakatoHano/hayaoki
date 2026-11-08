@@ -1,21 +1,23 @@
-# hayate
+# hayaoki
 
-Rails cold-start toolkit
+Wake your Rails app up early: find out where its boot time goes, and what to change.
 
-hayate measures where a Rails application's boot time goes and reports it by phase, by gem, and by initializer. The current release provides `hayate boot-report`.
+*hayaoki* (早起き) means "getting up early" in Japanese. It is a diagnostic tool: it measures and explains boot time, and does not make boot faster just by being installed.
+
+hayaoki measures where a Rails application's boot time goes and reports it by phase, by gem, and by initializer. The current release provides `hayaoki boot-report`.
 
 ## Installation
 
 ```sh
-gem install hayate
+gem install hayaoki
 ```
 
-hayate is a standalone command. You do not need to add it to your Gemfile.
+hayaoki is a standalone command. You do not need to add it to your Gemfile.
 
 ## Usage
 
 ```sh
-hayate boot-report [APP_DIR]
+hayaoki boot-report [APP_DIR]
 ```
 
 `APP_DIR` defaults to the current directory.
@@ -65,7 +67,7 @@ Estimated savings are upper bounds. Findings can overlap, and the output marks w
 
 ### TZInfo eager loading
 
-In production, Rails 7.2 and later add `TZInfo` to `config.eager_load_namespaces`, and `TZInfo.eager_load!` reads all ~600 time zones at boot. Measured with [`bench/tzinfo_eager_load.rb`](https://github.com/TakatoHano/hayate/blob/main/bench/tzinfo_eager_load.rb) (median of 7 fresh processes on a GitHub-hosted runner, Ruby 3.4):
+In production, Rails 7.2 and later add `TZInfo` to `config.eager_load_namespaces`, and `TZInfo.eager_load!` reads all ~600 time zones at boot. Measured with [`bench/tzinfo_eager_load.rb`](https://github.com/TakatoHano/hayaoki/blob/main/bench/tzinfo_eager_load.rb) (median of 7 fresh processes on a GitHub-hosted runner, Ruby 3.4):
 
 | Environment | `TZInfo.eager_load!` |
 | --- | --- |
@@ -78,7 +80,7 @@ Removing it (`Rails.application.config.eager_load_namespaces.delete(TZInfo)` in 
 
 ### Measured on real applications
 
-[`bench/boot_variants.rb`](https://github.com/TakatoHano/hayate/blob/main/bench/boot_variants.rb) boots an application with one setting changed at a time (median of fresh processes, GitHub-hosted runner, official Docker images, `RAILS_ENV=production`). The `real-apps` workflow runs it. Boot times vary by several hundred ms between runners, so compare within one run.
+[`bench/boot_variants.rb`](https://github.com/TakatoHano/hayaoki/blob/main/bench/boot_variants.rb) boots an application with one setting changed at a time (median of fresh processes, GitHub-hosted runner, official Docker images, `RAILS_ENV=production`). The `real-apps` workflow runs it. Boot times vary by several hundred ms between runners, so compare within one run.
 
 | Change | Mastodon 4.7.5 | Redmine 7.0 | Cost moved to later |
 | --- | --- | --- | --- |
@@ -88,20 +90,20 @@ Removing it (`Rails.application.config.eager_load_namespaces.delete(TZInfo)` in 
 | `eager_load_namespaces.delete(I18n)` | −108 ms | −286 ms | 182 ms / 317 ms on the first translation |
 | `config.i18n.available_locales = [:en]` | no gain | no gain | every locale file is still parsed |
 
-hayate has no I18n suggestion: making it lazy only moves the whole cost to the first translation, which nearly every request needs.
+hayaoki has no I18n suggestion: making it lazy only moves the whole cost to the first translation, which nearly every request needs.
 
 ## How it works
 
-hayate runs your application in a child process with a probe injected through `ruby -r`. The probe hooks the require family of methods with an alias chain, not `prepend`, so it coexists with bootsnap, Zeitwerk, and bundled_gems. Rails-specific hooks (initializers, on_load hooks, eager loading, `Bundler.require`, and `initialize!`) are installed lazily, when the corresponding file is loaded. The measured overhead is about 2%.
+hayaoki runs your application in a child process with a probe injected through `ruby -r`. The probe hooks the require family of methods with an alias chain, not `prepend`, so it coexists with bootsnap, Zeitwerk, and bundled_gems. Rails-specific hooks (initializers, on_load hooks, eager loading, `Bundler.require`, and `initialize!`) are installed lazily, when the corresponding file is loaded. The measured overhead is about 2%.
 
-The design is described in [docs/design/probe.md](https://github.com/TakatoHano/hayate/blob/main/docs/design/probe.md).
+The design is described in [docs/design/probe.md](https://github.com/TakatoHano/hayaoki/blob/main/docs/design/probe.md).
 
 ## Notes
 
-- By default hayate boots the application with `RAILS_ENV=production`. Boot may then need access to external services or credentials. If so, use `SECRET_KEY_BASE_DUMMY=1` for a dummy secret key, and `--env` to choose another environment.
+- By default hayaoki boots the application with `RAILS_ENV=production`. Boot may then need access to external services or credentials. If so, use `SECRET_KEY_BASE_DUMMY=1` for a dummy secret key, and `--env` to choose another environment.
 - Suggestions are candidates. Verify each one before applying it.
 - Output contains absolute paths unless you pass `--redact`. `--redact` rewrites paths only. It does not remove other content, so review the output before sharing it.
-- JSON output does not include the stderr of failed runs, because it may contain secrets. It keeps the error message, exit status, and error class. When every run fails, hayate prints the stderr tail to the terminal.
+- JSON output does not include the stderr of failed runs, because it may contain secrets. It keeps the error message, exit status, and error class. When every run fails, hayaoki prints the stderr tail to the terminal.
 - The category table (`gem`, `app`, `stdlib`, `other`, `init_body`, `unattributed`) sums to boot time. `init_body` is the own time of initializer blocks (not blamed on the gem that defines them). `unattributed` is boot time minus the self time attributed to files, initializer bodies, and on_load hooks. It covers time in `run_load_hooks` itself, the self time of phase and Zeitwerk eager load spans, and time outside any span. Background-thread spans are excluded.
 
 ## Requirements

@@ -4,7 +4,7 @@
 require "tmpdir"
 require "fileutils"
 
-dir = Dir.mktmpdir("hayate-spike")
+dir = Dir.mktmpdir("hayaoki-spike")
 File.write("#{dir}/a.rb", "require 'b'\nrequire_relative 'rel'\nA = 1\n")
 File.write("#{dir}/b.rb", "require 'c'\nB = 1\n")
 File.write("#{dir}/c.rb", "C = 1\n")

@@ -2,7 +2,7 @@
 
 require_relative "base"
 
-module Hayate
+module Hayaoki
   module BootReport
     module Rules
       # 開発・テスト用の既知の gem が、計測した環境 (既定は production) で読み込まれている。

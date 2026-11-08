@@ -2,7 +2,7 @@
 
 require_relative "../advisor"
 
-module Hayate
+module Hayaoki
   module BootReport
     module Formatters
       # 端末向けテキスト。reports は { "warm" => Report, "cold" => Report } (aggregate_result の戻り値)。
@@ -54,7 +54,7 @@ module Hayate
 
         def header(out)
           m = (@reports.values.first.meta || {})
-          out << "hayate boot-report"
+          out << "hayaoki boot-report"
           out << "  app: #{m["app_dir"]}" if m["app_dir"]
           out << "  runs=#{m["runs"] || @reports.values.first.runs} env=#{m["env"]} bootsnap=#{m["bootsnap"] || @conds.join(",")}"
           @reports.each do |c, r|

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "rule_helper"
-require "hayate/boot_report/rules/devise_reload_routes"
+require "hayaoki/boot_report/rules/devise_reload_routes"
 
 class DeviseReloadRoutesTest < Minitest::Test
   include RuleHelper

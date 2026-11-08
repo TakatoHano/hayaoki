@@ -9,7 +9,7 @@ class ProbeThreadTest < Minitest::Test
   N = 8
 
   def test_concurrent_requires_keep_trees_and_ownership
-    Dir.mktmpdir("hayate-thr") do |dir|
+    Dir.mktmpdir("hayaoki-thr") do |dir|
       N.times do |n|
         File.write("#{dir}/th#{n}_outer.rb", "sleep 0.03\nrequire './th#{n}_inner'\nsleep 0.01\n")
         File.write("#{dir}/th#{n}_inner.rb", "sleep 0.03\n")

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "rule_helper"
-require "hayate/boot_report/rules/controller_action_methods"
+require "hayaoki/boot_report/rules/controller_action_methods"
 
 class ControllerActionMethodsTest < Minitest::Test
   include RuleHelper

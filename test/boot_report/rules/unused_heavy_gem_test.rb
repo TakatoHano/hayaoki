@@ -154,7 +154,7 @@ class UnusedHeavyGemTest < Minitest::Test
   end
 
   def test_railtie_detected_from_child_payload_specs
-    Dir.mktmpdir("hayate-gem") do |gdir|
+    Dir.mktmpdir("hayaoki-gem") do |gdir|
       FileUtils.mkdir_p(File.join(gdir, "lib/foo"))
       File.write(File.join(gdir, "lib/foo/railtie.rb"), "")
       res = Struct.new(:payloads).new({ "warm" => [{ "status" => "ok", "specs" => { "foo_bar" => ["1.0", gdir, nil] } }] })

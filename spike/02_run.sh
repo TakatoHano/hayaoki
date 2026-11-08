@@ -3,7 +3,7 @@
 # 各パターンを require_relative 委譲方式 orig(gem_original_require) / require の両方で実行
 S=/tmp/hayaoki-spike
 export GEM_HOME=$S/gems GEM_PATH=$S/gems RAILS_ENV=production
-PROBE=/path/to/home/workspace/hayate/spike/02_probe.rb
+PROBE=/path/to/home/workspace/hayaoki/spike/02_probe.rb
 cd $S/spike_app || exit 1
 CMD='require "./config/environment"; puts "boot ok: #{Rails.application.initialized?}"'
 run() { echo "== $1"; shift; env "$@" 2>&1 | grep -E "boot ok|\[probe\]|Error|error" | cut -c1-260; }

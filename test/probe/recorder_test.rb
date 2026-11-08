@@ -37,7 +37,7 @@ class ProbeRecorderTest < Minitest::Test
   end
 
   def test_payload_schema
-    rep = run_probe('require "./t_leaf"', env: { "HAYATE_SPAWN_AT" => "1.5" }).report
+    rep = run_probe('require "./t_leaf"', env: { "HAYAOKI_SPAWN_AT" => "1.5" }).report
     %w[v status error pid ruby platform t0_real spawn_at cpu0_us boot_end_us exit_us pre_features features gc
        false_require width events specs rails_root pwd_realpath libdir probe_errors probe_warnings pending_hooks].each do |k|
       assert rep.data.key?(k), "missing key #{k}"
@@ -81,7 +81,7 @@ class ProbeRecorderTest < Minitest::Test
   end
 
   def test_require_relative_through_symlinked_directory_matches_native
-    Dir.mktmpdir("hayate-symlink") do |d|
+    Dir.mktmpdir("hayaoki-symlink") do |d|
       d = File.realpath(d)
       FileUtils.mkdir_p("#{d}/real/sub")
       File.write("#{d}/real/target.rb", 'puts "real target"')
@@ -107,7 +107,7 @@ class ProbeRecorderTest < Minitest::Test
   def test_late_install_failure_does_not_break_boot_and_is_recorded
     code = <<~'RUBY'
       module Zeitwerk; end
-      Hayate::Probe.send(:remove_const, :EagerLoadHook)
+      Hayaoki::Probe.send(:remove_const, :EagerLoadHook)
       require "zeitwerk/loader"
     RUBY
     r = run_probe(code, chdir: FIXTURES, ruby_args: ["-I#{FIXTURES}/fake_rails/lib"])
@@ -133,7 +133,7 @@ class ProbeRecorderTest < Minitest::Test
         "path" => Pathname.new("/tmp/x y"), "uni" => "日本語 \u{1F600}", "arr" => [1, -2, 3.5, nil, true, false, []],
         "nested" => { "a" => { "b" => [{}] } }, "int" => 12345678901234567890, "inf" => Float::INFINITY, "obj" => Object,
       }
-      print Hayate::Probe.encode(v)
+      print Hayaoki::Probe.encode(v)
     RUBY
     r = run_probe(code)
     h = JSON.parse(r.out)

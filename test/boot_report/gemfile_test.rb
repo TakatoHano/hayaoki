@@ -3,10 +3,10 @@
 require "test_helper"
 require "tmpdir"
 require "fileutils"
-require "hayate/boot_report/gemfile"
+require "hayaoki/boot_report/gemfile"
 
 class GemfileTest < Minitest::Test
-  G = Hayate::BootReport::Gemfile
+  G = Hayaoki::BootReport::Gemfile
 
   def test_parses_groups_and_require
     src = <<~G

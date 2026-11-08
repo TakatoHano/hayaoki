@@ -14,21 +14,21 @@ class ProbeAccuracyTest < Minitest::Test
     require "rails/initializable"
     require "zeitwerk/loader"
     require "rails/application"
-    $hayate_measured = {}
+    $hayaoki_measured = {}
     Rails::Application.initializers << [:spike_initializer, proc {
       t = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       sleep 0.02
-      $hayate_measured[:init] = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t
+      $hayaoki_measured[:init] = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t
     }]
     require "slowgem"
     ActiveSupport.run_load_hooks(:action_controller)
     Rails::Application.new.initialize!
     Zeitwerk::Loader.new("rails.main").eager_load
-    File.write(ENV.fetch("MEASURED"), $hayate_measured.map { |k, v| "#{k}=#{v}" }.join("\n"))
+    File.write(ENV.fetch("MEASURED"), $hayaoki_measured.map { |k, v| "#{k}=#{v}" }.join("\n"))
   RUBY
 
   def setup
-    Dir.mktmpdir("hayate-acc") do |dir|
+    Dir.mktmpdir("hayaoki-acc") do |dir|
       mf = File.join(dir, "measured")
       @result = run_probe(
         CODE, chdir: FIXTURES, env: { "MEASURED" => mf },

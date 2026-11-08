@@ -5,7 +5,7 @@ base = ["ruby"]
 conds = {
   a: [{}, base + ["-e", 'require "rails/all"']],
   b: [{}, base + ["-r", PROBE, "-e", 'require "rails/all"']],
-  c: [{ "HAYATE_PROBE_MODE" => "hook" }, base + ["-r", PROBE, "-e", 'require "rails/all"']],
+  c: [{ "HAYAOKI_PROBE_MODE" => "hook" }, base + ["-r", PROBE, "-e", 'require "rails/all"']],
 }
 t = Hash.new { |h, k| h[k] = [] }
 (N + WARM).times do |i|
@@ -17,8 +17,8 @@ t = Hash.new { |h, k| h[k] = [] }
     t[k] << (e - s) * 1000 if i >= WARM
   end
 end
-cnt = "#{ENV['TMPDIR'] || '/tmp'}/hayate_count"
-system({ "HAYATE_COUNT_FILE" => cnt }, *conds[:b][1], out: File::NULL, err: File::NULL)
+cnt = "#{ENV['TMPDIR'] || '/tmp'}/hayaoki_count"
+system({ "HAYAOKI_COUNT_FILE" => cnt }, *conds[:b][1], out: File::NULL, err: File::NULL)
 pct = ->(a, p) { s = a.sort; s[((s.size - 1) * p).ceil] }
 med = ->(a) { s = a.sort; s.size.odd? ? s[s.size / 2] : (s[s.size / 2 - 1] + s[s.size / 2]) / 2 }
 t.each { |k, v| puts format("%s median=%.1fms p90=%.1fms", k, med[v], pct[v, 0.9]) }

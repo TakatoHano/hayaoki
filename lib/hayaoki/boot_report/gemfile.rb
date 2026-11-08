@@ -2,7 +2,7 @@
 
 require "set"
 
-module Hayate
+module Hayaoki
   module BootReport
     # Gemfile の行ベースの簡易パーサ (eval しない)。
     # group ブロック / インラインの group: groups: / require: / eval_gemfile を拾う。

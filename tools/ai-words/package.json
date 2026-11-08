@@ -1,5 +1,5 @@
 {
-  "name": "hayate-ai-words",
+  "name": "hayaoki-ai-words",
   "private": true,
   "type": "module",
   "description": "AI らしい日本語の語彙チェック (textlint-rule-preset-ai-words-ja)",

@@ -1,16 +1,16 @@
 # frozen_string_literal: true
 
 require "json"
-require_relative "../../hayate"
+require_relative "../../hayaoki"
 require "tmpdir"
 require "fileutils"
 
-module Hayate
+module Hayaoki
   module BootReport
     PROBE_PATH = File.expand_path("../probe.rb", __dir__)
 
     # 子プロセスの失敗。stderr の末尾と、あれば部分結果 (payload) を持つ。
-    class RunError < Hayate::Error
+    class RunError < Hayaoki::Error
       attr_reader :reason, :stderr_tail, :partial, :exit_status, :open_span, :probe_error
 
       # reason: :exit_status / :no_output / :timeout / :boot_error
@@ -88,11 +88,11 @@ module Hayate
         [ruby, *(probe ? ["-r", PROBE_PATH] : []), "-e", script(probe)]
       end
 
-      # 基準実行は entry の require 直後の実時刻を一時ファイル (HAYATE_BASE_MARK) に書く。
+      # 基準実行は entry の require 直後の実時刻を一時ファイル (HAYAOKI_BASE_MARK) に書く。
       def script(probe)
         req = "require File.expand_path(#{entry.inspect}, Dir.pwd)"
         return req if probe
-        "#{req}; File.write(ENV.fetch('HAYATE_BASE_MARK'), Process.clock_gettime(Process::CLOCK_REALTIME).to_s)"
+        "#{req}; File.write(ENV.fetch('HAYAOKI_BASE_MARK'), Process.clock_gettime(Process::CLOCK_REALTIME).to_s)"
       end
 
       # 全 run が失敗した場合 (条件ごと) などに RunError を raise する。一部の run の失敗は meta["failed_runs"] に記録して続行する。
@@ -109,7 +109,7 @@ module Hayate
         @child = nil
         old_traps = install_traps
         begin
-          Dir.mktmpdir("hayate-run") do |tmp|
+          Dir.mktmpdir("hayaoki-run") do |tmp|
             @tmp = tmp
             @seq = 0
             conditions.each do |cond|
@@ -234,19 +234,19 @@ module Hayate
         errf = File.join(@tmp, "err-#{@seq}.log")
         child_env = { "RAILS_ENV" => env, "RACK_ENV" => env, "BOOTSNAP_CACHE_DIR" => cache_dir, "DISABLE_SPRING" => "1" }
         mark = File.join(@tmp, "mark-#{@seq}.txt")
-        child_env["HAYATE_PROBE_OUT"] = out if probe
-        child_env["HAYATE_BASE_MARK"] = mark unless probe
+        child_env["HAYAOKI_PROBE_OUT"] = out if probe
+        child_env["HAYAOKI_BASE_MARK"] = mark unless probe
         child_env["BUNDLE_FROZEN"] = "true" if gemfile_present?
         pid = nil
         t0 = nil
         spawn_real = nil
         with_clean_env do |base|
           e = base.merge(child_env)
-          e["HAYATE_SPAWN_AT"] = nil
+          e["HAYAOKI_SPAWN_AT"] = nil
           opts = { chdir: app_dir, in: File::NULL, out: File::NULL, err: errf, pgroup: true }
           t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
           spawn_real = Process.clock_gettime(Process::CLOCK_REALTIME)
-          e["HAYATE_SPAWN_AT"] = spawn_real.to_s if probe
+          e["HAYAOKI_SPAWN_AT"] = spawn_real.to_s if probe
           pid = Process.spawn(e, *command(probe: probe), **opts)
           @child = pid
           yield pid
@@ -270,7 +270,7 @@ module Hayate
         if probe
           if payload.nil?
             msg = if corrupt
-                    "probe output was not valid JSON (the file was truncated or overwritten, e.g. the app wrote to HAYATE_PROBE_OUT or the process was killed while writing)"
+                    "probe output was not valid JSON (the file was truncated or overwritten, e.g. the app wrote to HAYAOKI_PROBE_OUT or the process was killed while writing)"
                   else
                     "probe wrote no output (the app may have called exit!/exec, or replaced the process)"
                   end
@@ -353,7 +353,7 @@ module Hayate
         if @gemfile_present
           lock = "#{gemfile}.lock"
           unless File.file?(lock)
-            raise RunError.new(:no_lockfile, "#{lock} not found. hayate does not modify your app, so run `bundle lock` in #{app_dir} first (or `bundle install`).")
+            raise RunError.new(:no_lockfile, "#{lock} not found. hayaoki does not modify your app, so run `bundle lock` in #{app_dir} first (or `bundle install`).")
           end
         end
         @gemfile_present

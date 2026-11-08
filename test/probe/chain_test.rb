@@ -83,7 +83,7 @@ class ProbeChainTest < Minitest::Test
 
   def test_no_redefinition_warning_from_probe_under_w
     r = run_probe("require './t_leaf'", ruby_args: ["-w"])
-    refute_match(%r{hayate/probe\.rb.*redefined}, r.err)
+    refute_match(%r{hayaoki/probe\.rb.*redefined}, r.err)
     assert_equal "ok", r.report["status"]
   end
 
@@ -91,13 +91,13 @@ class ProbeChainTest < Minitest::Test
     code = <<~'RUBY'
       p Kernel.ancestors.first == Kernel
       p Kernel.singleton_class.ancestors.first == Kernel.singleton_class
-      p %i[require load require_relative __hayate_require __hayate_load].map { |m| Kernel.private_method_defined?(m) }
+      p %i[require load require_relative __hayaoki_require __hayaoki_load].map { |m| Kernel.private_method_defined?(m) }
       p Kernel.respond_to?(:require), Kernel.respond_to?(:load)
-      p Kernel.singleton_class.private_method_defined?(:__hayate_require)
-      p ENV.key?("HAYATE_PROBE_OUT"), ENV.key?("HAYATE_SPAWN_AT")
+      p Kernel.singleton_class.private_method_defined?(:__hayaoki_require)
+      p ENV.key?("HAYAOKI_PROBE_OUT"), ENV.key?("HAYAOKI_SPAWN_AT")
       p $LOADED_FEATURES.grep(/json/).empty?
     RUBY
-    r = run_probe(code, env: { "HAYATE_SPAWN_AT" => "123.5" })
+    r = run_probe(code, env: { "HAYAOKI_SPAWN_AT" => "123.5" })
     assert_equal ["true", "true", "[true, true, true, true, true]", "true", "true", "true", "false", "false", "true"], r.out.lines.map(&:strip).flat_map { |l| l.start_with?("[") ? [l] : l.split(", ") }
     assert_equal "123.5", r.report["spawn_at"]
   end

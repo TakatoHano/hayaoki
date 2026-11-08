@@ -22,7 +22,7 @@ class ProbeRailsTest < Minitest::Test
     # fixture アプリを tmp に複製し、ローカルの gem だけで Gemfile.lock を作る (1 回だけ)
     def prepare_app
       return @app_dir if @app_dir
-      @app_dir, @lock_error = prepare_rails_min_app("hayate-rails")
+      @app_dir, @lock_error = prepare_rails_min_app("hayaoki-rails")
       @app_dir
     end
 
@@ -120,7 +120,7 @@ class ProbeRailsTest < Minitest::Test
   end
 
   def test_probe_does_not_change_the_boot_result
-    code = 'require "./config/environment"; puts Rails.application.initialized?; puts $LOADED_FEATURES.reject { |f| f.end_with?("/hayate/probe.rb") }.sort'
+    code = 'require "./config/environment"; puts Rails.application.initialized?; puts $LOADED_FEATURES.reject { |f| f.end_with?("/hayaoki/probe.rb") }.sort'
     [{}, { "NO_BOOTSNAP" => "1" }].each do |env|
       next if env.empty? && !self.class.bootsnap_available?
       boot(env, probe: false, code: code) # warm-up (bootsnap cache)

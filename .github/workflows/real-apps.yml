@@ -1,6 +1,6 @@
 name: Real app validation
 
-# 実アプリ (公式 Docker イメージ) の中で hayate boot-report を動かす。手動実行のみ。
+# 実アプリ (公式 Docker イメージ) の中で hayaoki boot-report を動かす。手動実行のみ。
 on:
   workflow_dispatch:
     inputs:
@@ -11,7 +11,7 @@ on:
         description: "variants to run (space separated; empty = all)"
         default: ""
       task:
-        description: "report: hayate boot-report / variants: bench/boot_variants.rb"
+        description: "report: hayaoki boot-report / variants: bench/boot_variants.rb"
         type: choice
         options: [report, variants]
         default: report
@@ -72,23 +72,23 @@ jobs:
         run: |
           mkdir -p out && chmod 777 out
           docker run --rm --network host --entrypoint bash -u 0 ${{ matrix.env }} \
-            -v "$PWD:/hayate:ro" -v "$PWD/out:/out" -w ${{ matrix.dir }} ${{ matrix.image }} -c '
+            -v "$PWD:/hayaoki:ro" -v "$PWD/out:/out" -w ${{ matrix.dir }} ${{ matrix.image }} -c '
               set -e
               ${{ matrix.prep }}
               ruby -v; bundle -v
-              ruby -I/hayate/lib /hayate/exe/hayate boot-report --runs ${{ inputs.runs }} --bootsnap both --redact \
+              ruby -I/hayaoki/lib /hayaoki/exe/hayaoki boot-report --runs ${{ inputs.runs }} --bootsnap both --redact \
                 --format json --output /out/report.json .
-              ruby -I/hayate/lib /hayate/exe/hayate boot-report --runs ${{ inputs.runs }} --redact . > /out/report.txt
+              ruby -I/hayaoki/lib /hayaoki/exe/hayaoki boot-report --runs ${{ inputs.runs }} --redact . > /out/report.txt
             '
       - name: variants
         if: inputs.task == 'variants'
         run: |
           mkdir -p out && chmod 777 out
           docker run --rm --network host --entrypoint bash -u 0 ${{ matrix.env }} \
-            -v "$PWD:/hayate:ro" -v "$PWD/out:/out" -w ${{ matrix.dir }} ${{ matrix.image }} -c '
+            -v "$PWD:/hayaoki:ro" -v "$PWD/out:/out" -w ${{ matrix.dir }} ${{ matrix.image }} -c '
               set -e
               ${{ matrix.prep }}
-              ruby /hayate/bench/boot_variants.rb ${{ inputs.runs }} ${{ inputs.variants }} > /out/report.txt
+              ruby /hayaoki/bench/boot_variants.rb ${{ inputs.runs }} ${{ inputs.variants }} > /out/report.txt
             '
       - name: Summary
         if: always()

@@ -2,7 +2,7 @@
 
 require_relative "rules/base"
 
-module Hayate
+module Hayaoki
   module BootReport
     # 改善候補 1 件。evidence は String キーの Hash の配列。
     Suggestion = Struct.new(:rule, :confidence, :title, :evidence, :estimated_savings_ms, :action, :id, :overlaps, keyword_init: true) do

@@ -3,7 +3,7 @@
 S=/tmp/hayaoki-spike
 V=${V:?}
 export RAILS_ENV=production
-P=/path/to/home/workspace/hayate/spike/04_probe/probe.rb
+P=/path/to/home/workspace/hayaoki/spike/04_probe/probe.rb
 N=${N:-15}
 cd $S/app-$V || exit 1
 ruby -e 'require "./config/environment"' >/dev/null 2>&1
@@ -14,7 +14,7 @@ def t(env, *cmd) = (s = Process.clock_gettime(Process::CLOCK_MONOTONIC); system(
   r = Hash.new { |h, k| h[k] = [] }
   n.times do
     r[:none] << t(env, "ruby", "-e", 'require "./config/environment"')
-    r[:probe_out] << t(env.merge("HAYATE_PROBE_OUT" => "#{Dir.pwd}/../bench_out.json"), "ruby", "-r#{p}", "-e", 'require "./config/environment"')
+    r[:probe_out] << t(env.merge("HAYAOKI_PROBE_OUT" => "#{Dir.pwd}/../bench_out.json"), "ruby", "-r#{p}", "-e", 'require "./config/environment"')
   end
   med = ->(a) { a.sort[a.size / 2] }; p90 = ->(a) { a.sort[(a.size * 0.9).floor.clamp(0, a.size - 1)] }
   base = med[r[:none]]

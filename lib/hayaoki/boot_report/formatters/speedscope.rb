@@ -3,7 +3,7 @@
 require "json"
 require_relative "../../version"
 
-module Hayate
+module Hayaoki
   module BootReport
     module Formatters
       # payload (probe の出力) 1 回分を speedscope の evented 形式にする。メインスレッド (tid 0) のみ。
@@ -19,7 +19,7 @@ module Hayate
           sorted[sorted.size / 2]
         end
 
-        def initialize(name: "hayate boot")
+        def initialize(name: "hayaoki boot")
           @name = name
         end
 
@@ -83,7 +83,7 @@ module Hayate
             "shared" => { "frames" => frames },
             "profiles" => [{ "type" => "evented", "name" => name, "unit" => "microseconds",
                              "startValue" => 0, "endValue" => end_value, "events" => events }],
-            "name" => @name, "activeProfileIndex" => 0, "exporter" => "hayate #{Hayate::VERSION}"
+            "name" => @name, "activeProfileIndex" => 0, "exporter" => "hayaoki #{Hayaoki::VERSION}"
           }
         end
 
