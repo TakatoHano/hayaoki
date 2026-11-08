@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.0] - 2026-11-08
+
+### In-situ cold-start logging
+
+- `require "hayaoki/insitu"` in `config/boot.rb` (after `bundler/setup`) records each production cold start and writes one JSON line after the first non-health-check response: time from process start to ready and to the first response, phases (Bundler.require, initialize, eager load and its top namespaces), platform (Cloud Run, Lambda, generic), and the first request (route `controller#action`, status, files loaded during the request, GC).
+- On by default in production once required; `HAYAOKI_INSITU=0` turns it off, `1` turns it on elsewhere. Adds about 1 ms to boot and a few tens of nanoseconds to later requests.
+- Writes `no_request`, `incomplete` or `boot_error` lines when a server exits without a complete first response or fails to boot. Rake tasks (including `bin/rails db:prepare`), `rails console`/`runner`, job processes and forking parents (Puma cluster master) do not write `no_request` lines. Each forked worker writes its own line, timed from the master's start.
+- Works without Rails via `use Hayaoki::Insitu::Middleware`.
+
+### cold-start-report
+
+- `hayaoki cold-start-report` reads these lines from JSONL, Cloud Logging exports, CloudWatch Logs (including Logs Insights CSV and Lambda `REPORT` lines for `Init Duration`) and prints p50/p90/p99/max per phase, top first-request routes, and files loaded lazily by gem. Supports `--group-by`, `--since`, `--until`, `--exclude-proactive`, and `--format json`.
+
+### Examples
+
+- `examples/cloud_run` and `examples/lambda_lwa`: Dockerfiles with bootsnap precompiled at build time, a Cloud Run service with startup CPU boost and a `/up` startup probe, and a Lambda Web Adapter setup. CI builds and runs both images.
+
 ## [0.1.0] - 2026-11-08
 
 First release.

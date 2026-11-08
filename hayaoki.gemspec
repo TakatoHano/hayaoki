@@ -6,8 +6,8 @@ Gem::Specification.new do |spec|
   spec.name = "hayaoki"
   spec.version = Hayaoki::VERSION
   spec.authors = ["Takato Hano"]
-  spec.summary = "Find out where your Rails app spends its boot time, and what to change"
-  spec.description = "hayaoki boot-report boots a Rails app in a child process with a probe and breaks boot time down by gem, initializer, on_load hook and eager loading, then suggests measured fixes. Built for cold starts on serverless and containers."
+  spec.summary = "Find out where your Rails app spends its boot and cold-start time, and what to change"
+  spec.description = "hayaoki boot-report boots a Rails app in a child process with a probe and breaks boot time down by gem, initializer, on_load hook and eager loading, then suggests measured fixes. hayaoki/insitu logs each production cold start as one JSON line, and hayaoki cold-start-report summarizes those logs. Built for cold starts on serverless and containers."
   spec.homepage = "https://github.com/TakatoHano/hayaoki"
   spec.license = "MIT"
   spec.metadata = {
