@@ -121,8 +121,11 @@ jobs:
             -e SECRET_KEY_BASE=ci-only-not-a-secret ${{ matrix.env }} \
             "hayaoki-ci:${{ matrix.variant }}"
           base="http://127.0.0.1:${{ matrix.port }}"
-          curl -fsS --retry 90 --retry-delay 1 --retry-connrefused "$base/up" -o /dev/null
-          curl -fsS "$base/" | tee /dev/stderr | grep -qx ok
+          # docker-proxy accepts and resets until the app listens, so retry all errors
+          if ! curl -fsS --retry 90 --retry-delay 1 --retry-all-errors "$base/up" -o /dev/null; then
+            docker logs ci; exit 1
+          fi
+          curl -fsS "$base/" | tee /dev/stderr | grep -qx ok || { docker logs ci; exit 1; }
           sleep 1
           docker stop ci
           docker logs ci > container.log 2>&1 || true
