@@ -1,0 +1,30 @@
+name: In-situ overhead bench
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+      - name: Install rails and bootsnap
+        run: gem install --no-document rails bootsnap
+      - name: Measure
+        run: |
+          set -o pipefail
+          {
+            echo "## in-situ overhead (A = HAYAOKI_INSITU=0, B = HAYAOKI_INSITU=1)"
+            echo
+            echo '```'
+            ruby bench/insitu_overhead.rb --runs 15
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
