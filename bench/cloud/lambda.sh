@@ -145,14 +145,12 @@ if [[ $SKIP_BUILD == 0 ]]; then
     ar_keep_latest "$REPO" "$GCP_REGION_FIXED"
     build_with_cloud_build "$AR_IMAGE" "$ctx" "$tgt"
     copy_ar_to_ecr "$AR_IMAGE" "$IMAGE"
-    ar_prune_untagged "${AR_IMAGE%:*}"
   else
     "${AWS[@]}" ecr get-login-password | docker login --username AWS --password-stdin "$ECR_HOST"
     # --provenance=false: Lambda rejects the OCI index that buildx adds by default.
     docker build --platform linux/amd64 --provenance=false ${tgt:+--target "$tgt"} -t "$IMAGE" "$ctx"
     docker push "$IMAGE"
   fi
-  ecr_prune_untagged "$REPO"
 fi
 
 # --- role (basic logging only) ---
@@ -206,6 +204,9 @@ for mem in $MEMS; do
   [[ -f "$(cell_dir "$mem")/start_ms.txt" ]] || echo $(( $(date +%s) * 1000 )) > "$(cell_dir "$mem")/start_ms.txt"
   assert_private "$fn"
 done
+# Only after every function points at the new image (wait function-updated-v2 above).
+ecr_prune_untagged "$REPO"
+if [[ "$BUILDER" == cloudbuild ]]; then ar_prune_untagged "${AR_IMAGE%:*}"; fi
 
 # invoke_one MEM INDEX: direct invoke; the response log tail tells cold (Init Duration) from warm.
 invoke_one() {

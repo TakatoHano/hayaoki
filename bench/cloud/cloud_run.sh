@@ -114,7 +114,6 @@ else
     ctx="$OUT/context"
     prepare_context "$APP" cloud_run "$ctx"
     build_with_cloud_build "$IMAGE" "$ctx" "$([[ $APP == redmine ]] && echo cloud_run || true)"
-    ar_prune_untagged "${IMAGE%:*}"
   fi
   [[ -f "$OUT/secret_key_base" ]] || openssl rand -hex 64 > "$OUT/secret_key_base"
   # HAYAOKI_BENCH_SAMPLE only exists to create a new revision in --force-cold mode.
@@ -127,6 +126,8 @@ else
     --set-env-vars "SECRET_KEY_BASE=$(cat "$OUT/secret_key_base"),HAYAOKI_BENCH_SAMPLE=0"
   [[ -f "$OUT/start.txt" ]] || date -u +%Y-%m-%dT%H:%M:%SZ > "$OUT/start.txt"
 fi
+# Only after the new revision is serving: older revisions may still reference the replaced image.
+ar_prune_untagged "${IMAGE%:*}"
 
 # Only the invoking user gets roles/run.invoker.
 "${GC[@]}" run services add-iam-policy-binding "$SERVICE" --region "$REGION" \

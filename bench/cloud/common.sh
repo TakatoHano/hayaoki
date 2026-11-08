@@ -147,6 +147,14 @@ copy_ar_to_ecr() {
   "${AWS[@]}" ecr get-login-password | crane auth login "${dst%%/*}" -u AWS --password-stdin
   local rc=0
   crane copy "$src" "$dst" || rc=$?
+  # ecr_prune_untagged would delete the untagged child manifests of an index and break the tag
+  local m=""
+  if [[ $rc == 0 ]] && ! m="$(crane manifest "$dst")"; then
+    echo "error: could not read the manifest of $dst" >&2; rc=1
+  fi
+  if [[ $rc == 0 ]] && grep -Eq '"mediaType": *"application/vnd\.(oci\.image\.index|docker\.distribution\.manifest\.list)' <<<"$m"; then
+    echo "error: $dst is a manifest list/index; build a single-platform image" >&2; rc=1
+  fi
   # crane stores the logins in ~/.docker/config.json; do not leave them there
   crane auth logout "${src%%/*}" >/dev/null 2>&1 || true
   crane auth logout "${dst%%/*}" >/dev/null 2>&1 || true
@@ -212,25 +220,30 @@ JSON
 }
 
 # ecr_keep_latest REPO: tags are one per app, so a re-push leaves the old image untagged. The lifecycle
-# rule is a backstop (it runs asynchronously, minimum count 1); ecr_prune_untagged deletes them right away.
+# rule is a backstop (asynchronous); ecr_prune_untagged deletes them once the functions use the new image.
 ecr_keep_latest() {
   "${AWS[@]}" ecr put-lifecycle-policy --repository-name "$1" --lifecycle-policy-text \
-    '{"rules":[{"rulePriority":1,"description":"keep only the newest untagged image","selection":{"tagStatus":"untagged","countType":"imageCountMoreThan","countNumber":1},"action":{"type":"expire"}}]}' >/dev/null
+    '{"rules":[{"rulePriority":1,"description":"expire untagged images after a day","selection":{"tagStatus":"untagged","countType":"sinceImagePushed","countUnit":"days","countNumber":1},"action":{"type":"expire"}}]}' >/dev/null
 }
 
 # ecr_prune_untagged REPO: delete untagged images now, so each app keeps at most one image.
 ecr_prune_untagged() {
-  local ids
+  local ids d fails
   ids="$("${AWS[@]}" ecr list-images --repository-name "$1" --filter tagStatus=UNTAGGED --query 'imageIds[].imageDigest' --output text)"
   [[ -z "$ids" || "$ids" == None ]] && return 0
   local args=(); for d in $ids; do args+=("imageDigest=$d"); done
-  "${AWS[@]}" ecr batch-delete-image --repository-name "$1" --image-ids "${args[@]}" >/dev/null
+  fails="$("${AWS[@]}" ecr batch-delete-image --repository-name "$1" --image-ids "${args[@]}" --query 'length(failures)' --output text)"
+  [[ "$fails" == 0 ]] || log "warning: $fails untagged image(s) in ECR repo $1 were not deleted"
 }
 
 # ar_prune_untagged IMAGE_PATH (no tag): delete untagged versions of one AR image now.
 ar_prune_untagged() {
-  local d
-  for d in $("${GC[@]}" artifacts docker images list "$1" --include-tags --filter='-tags:*' --format='value(version)' 2>/dev/null); do
-    "${GC[@]}" artifacts docker images delete "$1@$d" --quiet >/dev/null
+  local d list
+  if ! list="$("${GC[@]}" artifacts docker images list "$1" --include-tags --filter='-tags:*' --format='value(version)')"; then
+    log "warning: could not list untagged versions of $1; nothing deleted"; return 0
+  fi
+  for d in $list; do
+    # no --delete-tags: a tagged (in-use) version makes this fail instead of deleting it
+    "${GC[@]}" artifacts docker images delete "$1@$d" --quiet >/dev/null || log "warning: could not delete $1@$d"
   done
 }
