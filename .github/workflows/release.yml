@@ -1,0 +1,97 @@
+name: Release
+
+# v* タグの push で、テスト → gem の build と rubygems への push → GitHub Release の作成を行う。
+# 手動実行では既存のタグを指定する。rubygems に公開済みの版なら push は飛ばし、Release だけ作る。
+#
+# rubygems への push は Trusted Publishing (OIDC) を使うので、API キーを secrets に置かない。
+# rubygems.org の hayaoki の設定で、次の Trusted Publisher を登録しておくこと:
+#   repository: TakatoHano/hayaoki / workflow: release.yml / environment: release
+# environment "release" は v* タグと main (手動実行) からだけ使える。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "release する既存のタグ (例: v0.1.0)"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0"
+      - name: Install gems
+        run: gem install --no-document minitest rake rails bootsnap
+      - name: Test
+        run: ruby -Ilib -Itest -e 'Dir["test/**/*_test.rb"].each { load _1 }'
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write # GitHub Release
+      id-token: write # rubygems の Trusted Publishing
+    steps:
+      # リリースノートは実行した ref (タグの push ならタグ、手動実行なら main) の CHANGELOG から作る。
+      # gem はタグの内容から作る
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          path: tag-src
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+      - name: Check version and notes
+        id: meta
+        run: |
+          version=$(ruby -Itag-src/lib -e 'require "hayaoki/version"; print Hayaoki::VERSION')
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::tag $TAG does not match Hayaoki::VERSION $version"; exit 1
+          fi
+          awk -v v="$version" '$0 ~ "^## \\[" v "\\]" {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no section for $version"; exit 1
+          fi
+          printf "\nInstall: \`gem install hayaoki -v %s\`\n" "$version" >> notes.md
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Build gem
+        working-directory: tag-src
+        run: gem build hayaoki.gemspec
+      - name: Check whether the version is already on rubygems.org
+        id: published
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' "https://rubygems.org/api/v2/rubygems/hayaoki/versions/${{ steps.meta.outputs.version }}.json")
+          echo "published=$([ "$code" = 200 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - uses: rubygems/configure-rubygems-credentials@v1.0.0
+        if: steps.published.outputs.published == 'false'
+      - name: Push gem
+        if: steps.published.outputs.published == 'false'
+        working-directory: tag-src
+        run: gem push "hayaoki-${{ steps.meta.outputs.version }}.gem"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists"; exit 0
+          fi
+          gh release create "$TAG" --verify-tag --title "hayaoki ${{ steps.meta.outputs.version }}" \
+            --notes-file notes.md "tag-src/hayaoki-${{ steps.meta.outputs.version }}.gem"

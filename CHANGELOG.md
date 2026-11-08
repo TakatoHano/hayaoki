@@ -2,19 +2,33 @@
 
 ## [0.1.0] - 2026-11-08
 
-- `hayaoki boot-report` measures boot time over several runs and reports the median and range, in text, JSON, or speedscope format.
-- The probe, injected with `ruby -r`, records require, require_relative, load, initializer, on_load, eager_load, `Bundler.require`, and `initialize!` as spans.
-- `config.eager_load_namespaces` entries (e.g. `TZInfo.eager_load!`) are recorded as eager_load spans and attributed to the gem that defines them, instead of disappearing into the `eager_load!` initializer body.
-- Requires are matched to loaded files for `./x`, `../x`, `x.so` (loaded as `.bundle` on macOS) and built-in extensions such as `prism/prism.so`. Before, these fell back to the last loaded file, which could be another thread's. Remaining fallbacks are counted and reported as a warning.
-- Before measuring, the child `ruby` is checked to be Ruby 3.2 or later, with a one-line error that points to `--ruby` otherwise.
-- Phase breakdown (vm boot, bundler require, initialize) and per-gem and per-initializer rankings.
-- Improvement suggestions, printed as candidates: bootsnap effectiveness, heavy app initializers, unused heavy gems, dev gems in production, and eager load trade-offs. Disable with `--no-suggestions`.
-- `tzinfo_eager_load` suggestion: `TZInfo.eager_load!` takes 200–330 ms in Linux containers (see `bench/tzinfo_eager_load.rb`), and it can be made lazy with one line.
-- `devise_reload_routes` and `controller_action_methods` suggestions, measured on Mastodon and Redmine with `bench/boot_variants.rb`.
-- A ranking of `config.eager_load_namespaces` entries in the text output, and `eager_namespaces` in the JSON output.
-- Options for runs, environment, bootsnap mode (`warm`, `cold`, `both`), entry file, timeout, output file, and rows per ranking, plus thresholds for suggestions.
-- The probe has no runtime dependencies and writes JSON with its own encoder.
-- `--redact` replaces absolute paths in the output (text, JSON, and speedscope): the app directory with `<app>`, gem paths (including bundler git gems) with `<gem:name>/`, and the home directory with `~`.
-- A category table in the text and JSON output, with an `unattributed` row (boot time minus attributed self time) so the totals add up.
-- Applications that are themselves gems (`gemspec`, engine dummy apps, `path: "."`) are categorized as `app` for files under `app`, `config`, `lib`, and `db`.
-- JSON output omits the stderr of failed runs, which may contain secrets. It keeps the message, exit status, and error class.
+First release.
+
+### Measurement
+
+- `hayaoki boot-report` boots a Rails application several times in a child process and reports the median and range of each measurement, in text, JSON, or speedscope format.
+- A probe injected with `ruby -r` records `require`, `require_relative`, `load`, initializers, `on_load` hooks, eager loading (Zeitwerk and each `config.eager_load_namespaces` entry, such as `TZInfo.eager_load!`), `Bundler.require`, and `initialize!`. It has no runtime dependencies, coexists with bootsnap and Zeitwerk, and adds about 2% to boot time.
+- Boot time is broken down by phase (vm boot, bundler require, initialize, eager load), by gem, by initializer, by `on_load` hook, and by eager load namespace. A category table (`gem`, `app`, `stdlib`, `other`, `init_body`, `unattributed`) adds up to the total boot time.
+- Each `require` is attributed to the gem or app file it loaded. Requires that cannot be matched to a loaded file are reported as a warning. Spans on background threads are listed but left out of the totals.
+- Applications that are themselves gems (`gemspec`, engine dummy apps) are handled: their own files count as `app`.
+- Runs with bootsnap's cache warm, cold, or both, and measures the probe's own overhead.
+- Supports Ruby 3.2 or later and Rails 7.0 or later. Before measuring, hayaoki checks that the application's `ruby` is new enough and points to `--ruby` if not.
+
+### Suggestions
+
+Each suggestion shows its evidence and an upper bound of the time it could save, and marks findings whose savings overlap. They were checked against Mastodon and Redmine.
+
+- `bootsnap_ineffective`: bootsnap missing, or its cache not used.
+- `dev_gems_in_production`: development or test gems loaded in production, based on the Gemfile's groups (including `eval_gemfile`).
+- `heavy_app_initializer`: slow files in `config/initializers`.
+- `tzinfo_eager_load`: `TZInfo.eager_load!` reading every time zone at boot (200–330 ms in Linux containers, Rails 7.2+).
+- `devise_reload_routes`: Devise loading the routes a second time before eager loading.
+- `controller_action_methods`: `action_methods` computed for every controller at boot.
+- `unused_heavy_gem`: heavy gems with no references in the app's code.
+- `eager_load_tradeoff`: eager loading taking a large share of boot.
+
+### Output and options
+
+- Options for the number of runs, environment, bootsnap mode, Ruby executable, entry file, timeout, output file, rows per ranking, and suggestion thresholds.
+- `--redact` replaces the app directory, gem paths, and home directory in the output, so a report can be shared.
+- JSON output leaves out the stderr of failed runs, because it may contain secrets.
