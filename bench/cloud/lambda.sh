@@ -127,6 +127,7 @@ maybe_background "$(cell_dir "$FIRST_MEM")/run.log" "${ORIG_ARGS[@]}"
 # --- ECR + build ---
 "${AWS[@]}" ecr describe-repositories --repository-names "$REPO" >/dev/null 2>&1 || \
   "${AWS[@]}" ecr create-repository --repository-name "$REPO" --image-scanning-configuration scanOnPush=false >/dev/null
+ecr_keep_latest "$REPO"
 
 ecr_image_exists() { "${AWS[@]}" ecr describe-images --repository-name "$REPO" --image-ids imageTag="$APP" >/dev/null 2>&1; }
 if [[ $SKIP_BUILD == 0 && -f "$(cell_dir "$FIRST_MEM")/start_ms.txt" ]] && ecr_image_exists; then
@@ -141,14 +142,17 @@ if [[ $SKIP_BUILD == 0 ]]; then
     "${GC[@]}" artifacts repositories describe "$REPO" --location "$GCP_REGION_FIXED" >/dev/null 2>&1 || \
       "${GC[@]}" artifacts repositories create "$REPO" --repository-format docker --location "$GCP_REGION_FIXED" \
         --description "hayaoki bench images (delete with teardown.sh)"
+    ar_keep_latest "$REPO" "$GCP_REGION_FIXED"
     build_with_cloud_build "$AR_IMAGE" "$ctx" "$tgt"
     copy_ar_to_ecr "$AR_IMAGE" "$IMAGE"
+    ar_prune_untagged "${AR_IMAGE%:*}"
   else
     "${AWS[@]}" ecr get-login-password | docker login --username AWS --password-stdin "$ECR_HOST"
     # --provenance=false: Lambda rejects the OCI index that buildx adds by default.
     docker build --platform linux/amd64 --provenance=false ${tgt:+--target "$tgt"} -t "$IMAGE" "$ctx"
     docker push "$IMAGE"
   fi
+  ecr_prune_untagged "$REPO"
 fi
 
 # --- role (basic logging only) ---

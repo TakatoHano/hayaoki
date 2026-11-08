@@ -195,3 +195,42 @@ make_shareable() {
     log "WARNING: $sh may still contain identifiers (see .REVIEW_NEEDED); do not share it before checking: $(head -n3 <<<"$residue" | tr '\n' ' ')"
   fi
 }
+
+# ar_keep_latest REPO LOCATION: at most one version (the newest) of each image in an Artifact Registry repo.
+# Cleanup runs asynchronously on Google's side (about once a day); KEEP wins over DELETE.
+ar_keep_latest() {
+  local repo="$1" loc="$2" pol
+  pol="$(mktemp)"
+  cat > "$pol" <<'JSON'
+[
+  {"name": "delete-all", "action": {"type": "Delete"}, "condition": {"tagState": "any"}},
+  {"name": "keep-newest", "action": {"type": "Keep"}, "mostRecentVersions": {"keepCount": 1}}
+]
+JSON
+  "${GC[@]}" artifacts repositories set-cleanup-policies "$repo" --location "$loc" --policy "$pol" --no-dry-run >/dev/null
+  rm -f "$pol"
+}
+
+# ecr_keep_latest REPO: tags are one per app, so a re-push leaves the old image untagged. The lifecycle
+# rule is a backstop (it runs asynchronously, minimum count 1); ecr_prune_untagged deletes them right away.
+ecr_keep_latest() {
+  "${AWS[@]}" ecr put-lifecycle-policy --repository-name "$1" --lifecycle-policy-text \
+    '{"rules":[{"rulePriority":1,"description":"keep only the newest untagged image","selection":{"tagStatus":"untagged","countType":"imageCountMoreThan","countNumber":1},"action":{"type":"expire"}}]}' >/dev/null
+}
+
+# ecr_prune_untagged REPO: delete untagged images now, so each app keeps at most one image.
+ecr_prune_untagged() {
+  local ids
+  ids="$("${AWS[@]}" ecr list-images --repository-name "$1" --filter tagStatus=UNTAGGED --query 'imageIds[].imageDigest' --output text)"
+  [[ -z "$ids" || "$ids" == None ]] && return 0
+  local args=(); for d in $ids; do args+=("imageDigest=$d"); done
+  "${AWS[@]}" ecr batch-delete-image --repository-name "$1" --image-ids "${args[@]}" >/dev/null
+}
+
+# ar_prune_untagged IMAGE_PATH (no tag): delete untagged versions of one AR image now.
+ar_prune_untagged() {
+  local d
+  for d in $("${GC[@]}" artifacts docker images list "$1" --include-tags --filter='-tags:*' --format='value(version)' 2>/dev/null); do
+    "${GC[@]}" artifacts docker images delete "$1@$d" --quiet >/dev/null
+  done
+}

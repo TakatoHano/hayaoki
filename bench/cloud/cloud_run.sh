@@ -102,6 +102,7 @@ maybe_background "$OUT/run.log" "${ORIG_ARGS[@]}"
 "${GC[@]}" artifacts repositories describe "$REPO" --location "$REGION" >/dev/null 2>&1 || \
   "${GC[@]}" artifacts repositories create "$REPO" --repository-format docker --location "$REGION" \
     --description "hayaoki bench images (delete with teardown.sh)"
+ar_keep_latest "$REPO" "$REGION"
 
 image_exists() { "${GC[@]}" artifacts docker images describe "$IMAGE" >/dev/null 2>&1; }
 service_exists() { "${GC[@]}" run services describe "$SERVICE" --region "$REGION" >/dev/null 2>&1; }
@@ -113,6 +114,7 @@ else
     ctx="$OUT/context"
     prepare_context "$APP" cloud_run "$ctx"
     build_with_cloud_build "$IMAGE" "$ctx" "$([[ $APP == redmine ]] && echo cloud_run || true)"
+    ar_prune_untagged "${IMAGE%:*}"
   fi
   [[ -f "$OUT/secret_key_base" ]] || openssl rand -hex 64 > "$OUT/secret_key_base"
   # HAYAOKI_BENCH_SAMPLE only exists to create a new revision in --force-cold mode.

@@ -99,6 +99,8 @@ Add `--app redmine` for Redmine. Options: `./cloud_run.sh` and `./lambda.sh` wit
 
 Use a dedicated GCP project and AWS account for this bench. `teardown.sh` deletes the `source/` prefix of the project's `*_cloudbuild` bucket, which would also remove other Cloud Build sources in a shared project.
 
+Images: each app keeps at most one image. After a push the scripts delete untagged (replaced) versions right away; an Artifact Registry cleanup policy (keep the newest version) and an ECR lifecycle rule (expire untagged) are set as a backstop.
+
 ## Rough cost
 
 A handful of requests, small images, 7-day log retention: well under 1 USD per run on each platform (Cloud Build
