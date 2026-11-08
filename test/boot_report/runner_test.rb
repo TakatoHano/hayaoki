@@ -27,6 +27,28 @@ class BootReportRunnerTest < Minitest::Test
     dir
   end
 
+  def test_old_child_ruby_is_reported_clearly
+    Dir.mktmpdir do |dir|
+      fake = File.join(dir, "oldruby")
+      File.write(fake, "#!/bin/sh\nprintf 2.6.10\n")
+      File.chmod(0o755, fake)
+      e = assert_raises(Hayaoki::BootReport::RunError) { Hayaoki::BootReport::Runner.new(app_dir: dir, runs: 1, ruby: fake).run }
+      assert_equal :ruby, e.reason
+      assert_includes e.message, "Ruby 2.6.10"
+      assert_includes e.message, "--ruby"
+    end
+  end
+
+  def test_missing_child_ruby_is_reported_clearly
+    Dir.mktmpdir do |dir|
+      e = assert_raises(Hayaoki::BootReport::RunError) do
+        Hayaoki::BootReport::Runner.new(app_dir: dir, runs: 1, ruby: File.join(dir, "no-such-ruby")).run
+      end
+      assert_equal :ruby, e.reason
+      assert_includes e.message, "not found"
+    end
+  end
+
   def test_rails_min_warm_and_cold
     skip "bootsnap is not installed" if Gem::Specification.find_all_by_name("bootsnap").empty?
     dir = prepare_rails

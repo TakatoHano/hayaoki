@@ -162,7 +162,7 @@ module Hayaoki
 
     def report_error(e, opts = {})
       case e.reason
-      when :app_dir, :no_lockfile, :interrupted
+      when :app_dir, :no_lockfile, :interrupted, :ruby # 起動前の確認で止まったもの
         @err.puts "hayaoki: #{e.message.lines.first.to_s.strip}"
         return
       end

@@ -98,6 +98,7 @@ module Hayaoki
       # 全 run が失敗した場合 (条件ごと) などに RunError を raise する。一部の run の失敗は meta["failed_runs"] に記録して続行する。
       def run
         check_app!
+        check_ruby!
         @gemfile_present = nil
         gemfile_present?
         conditions = bootsnap == :both ? %i[warm cold] : [bootsnap]
@@ -343,6 +344,23 @@ module Hayaoki
       def check_app!
         return if File.directory?(app_dir)
         raise RunError.new(:app_dir, "APP_DIR not found: #{app_dir}")
+      end
+
+      MIN_RUBY = Gem::Version.new("3.2")
+
+      # 子プロセスの ruby (既定は PATH 上の ruby。rbenv などはアプリのディレクトリで版を選ぶ) が probe を読めるか。
+      # 古い ruby だと probe の構文エラーが大量に出るだけで原因が分からないので、先に版を確かめる。
+      def check_ruby!
+        out, st = with_clean_env do |base|
+          IO.popen(base, [ruby, "-e", "print RUBY_VERSION"], chdir: app_dir, err: File::NULL, &:read).then { [_1, $?] }
+        end
+        v = out.to_s.strip
+        raise RunError.new(:ruby, "could not run `#{ruby} -e 'print RUBY_VERSION'` in #{app_dir}") unless st&.success? && v.match?(/\A\d+\.\d+/)
+        return if Gem::Version.new(v) >= MIN_RUBY
+        raise RunError.new(:ruby, "`#{ruby}` in #{app_dir} is Ruby #{v}, but the probe needs Ruby #{MIN_RUBY} or later. " \
+                                  "Pass the app's ruby with --ruby PATH, or fix PATH / .ruby-version.")
+      rescue SystemCallError => e
+        raise RunError.new(:ruby, "ruby executable not found: #{ruby} (#{e.class}). Pass it with --ruby PATH.")
       end
 
       # Gemfile があるアプリは Gemfile.lock が必須 (子に BUNDLE_FROZEN=true を渡すので、lock の生成・更新をさせない)。

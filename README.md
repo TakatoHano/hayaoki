@@ -100,6 +100,7 @@ The design is described in [docs/design/probe.md](https://github.com/TakatoHano/
 
 ## Notes
 
+- The application is booted with the `ruby` found on `PATH` in the application directory (so rbenv, asdf, or mise pick the app's version), or with `--ruby PATH`. It must be Ruby 3.2 or later; hayaoki checks this before measuring.
 - By default hayaoki boots the application with `RAILS_ENV=production`. Boot may then need access to external services or credentials. If so, use `SECRET_KEY_BASE_DUMMY=1` for a dummy secret key, and `--env` to choose another environment.
 - Suggestions are candidates. Verify each one before applying it.
 - Output contains absolute paths unless you pass `--redact`. `--redact` rewrites paths only. It does not remove other content, so review the output before sharing it.
