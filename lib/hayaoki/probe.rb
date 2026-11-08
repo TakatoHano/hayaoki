@@ -12,6 +12,9 @@ return if defined?(::Hayaoki::Probe::INSTALLED)
 
 module Hayaoki; end
 
+# hooks の前に読む。require だと $LOADED_FEATURES に載って app の状態が変わるので load を使う
+load File.join(__dir__, "mini_json.rb")
+
 module Hayaoki::Probe
   CLOCK = Process::CLOCK_MONOTONIC
   T0 = Process.clock_gettime(CLOCK)
@@ -337,34 +340,8 @@ module Hayaoki::Probe
   end
 
   # --- 出力 (§5) ---------------------------------------------------------------
-  ESC = { '"' => '\\"', "\\" => "\\\\", "\n" => "\\n", "\r" => "\\r", "\t" => "\\t" }.freeze
-
-  NEEDS_ESCAPE = /["\\\x00-\x1f]/
-
-  # 自前の最小 JSON エンコーダ。対象は String / Symbol / Integer / Float / nil / true / false / Array / Hash。
-  # 文字列の大半はエスケープ不要なので、確認だけして引用符で囲む速い方法を先に試す。
-  def self.encode(v)
-    case v
-    when String
-      s = v.encoding == Encoding::UTF_8 ? v : v.dup.force_encoding(Encoding::UTF_8)
-      if s.valid_encoding?
-        return "\"#{s}\"" unless s.match?(NEEDS_ESCAPE)
-      else
-        s = s.scrub
-      end
-      "\"#{s.gsub(/["\\\u0000-\u001f]/) { |c| ESC[c] || format("\\u%04x", c.ord) }}\""
-    when Symbol then encode(v.to_s)
-    when Integer then v.to_s
-    when Float then v.finite? ? v.to_s : "null"
-    when nil then "null"
-    when true, false then v.to_s
-    when Array
-      return "[#{v.join(",")}]" if v.all?(Integer) # Integer だけの配列はまとめて連結する
-      "[#{v.map { |x| encode(x) }.join(",")}]"
-    when Hash then "{#{v.map { |k, x| "#{encode(k.to_s)}:#{encode(x)}" }.join(",")}}"
-    else encode(v.to_s)
-    end
-  end
+  # JSON エンコーダは mini_json.rb (Hayaoki::MiniJSON) に分離した。
+  def self.encode(v) = Hayaoki::MiniJSON.encode(v)
 
   def self.us(t) = ((t - T0) * 1_000_000).round
 
@@ -441,7 +418,7 @@ module Hayaoki::Probe
     err = $!
     ok = err.nil? || (err.is_a?(SystemExit) && err.success?)
     error = ok ? nil : { class: err.class.name, message: err.message.to_s[0, 2000], backtrace: Array(err.backtrace).first(20) }
-    data = encode(payload(ok ? "ok" : "error", error, now))
+    data = Hayaoki::MiniJSON.encode(payload(ok ? "ok" : "error", error, now))
     File.write("#{OUT}.tmp", data)
     File.rename("#{OUT}.tmp", OUT)
   rescue Exception => e # at_exit で例外を出して終了コードを変えない
