@@ -50,6 +50,23 @@ Phases (median)
   initialize             ███████████                  267.0 ms
 ```
 
+### cold-start-report
+
+```sh
+hayaoki cold-start-report [FILE...]
+```
+
+Summarizes the `cold_start` log lines written by the in-situ recorder. It reads FILEs, or stdin when none are given. Bare JSON lines, Cloud Logging exports (`jsonPayload`) and CloudWatch lines (prefix before the JSON, or a `message` string) are accepted; other lines are skipped and counted. `Init Duration` in Lambda `REPORT` lines is reported as `platform_init_ms`.
+
+The output has the line count, p50/p90/p99/max for ready, first response and each phase, the mean `eager_top`, the first-request routes and lazy-loaded feature groups, and the split between user-facing and proactive starts.
+
+| Option | Description |
+| --- | --- |
+| `--group-by KEY` | group by a dotted path or alias: `revision`, `platform.kind`, `runtime.ruby`, `init_type` |
+| `--since TIME`, `--until TIME` | filter by `start_at` (ISO 8601) |
+| `--format FORMAT` | `text` or `json` (default `text`) |
+| `--exclude-proactive` | drop lines with `idle` > 1000 ms (Lambda proactive init) |
+
 ## Suggestions
 
 | Rule | Confidence | What it looks for |

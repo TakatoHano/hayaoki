@@ -1,0 +1,110 @@
+# frozen_string_literal: true
+
+require "test_helper"
+require "stringio"
+require "hayaoki/cli"
+require "hayaoki/cold_start_report/runner"
+require "hayaoki/cold_start_report/formatters/text"
+require "hayaoki/cold_start_report/formatters/json"
+
+class ColdStartReportTest < Minitest::Test
+  FX = File.join(FIXTURES, "cold_start")
+
+  def fx(name) = File.read(File.join(FX, name))
+
+  def build(*names, **kw) = Hayaoki::ColdStartReport.build(names.map { fx(_1) }, **kw)
+
+  def run_cli(argv, stdin: "")
+    out = StringIO.new
+    err = StringIO.new
+    code = Hayaoki::CLI.new(stdout: out, stderr: err, stdin: StringIO.new(stdin)).run(argv)
+    [code, out.string, err.string]
+  end
+
+  def test_bare_lines
+    s = build("bare.jsonl")["summary"]
+    assert_equal 4, s["n"]
+    assert_equal 1, s["proactive"]
+    assert_equal 2000, s["ready_ms"]["p50"]
+    assert_equal 2300, s["ready_ms"]["max"]
+    assert_equal "issues#index", s["first_request"]["top_routes"][0]["route"]
+    assert_equal 2, s["first_request"]["top_routes"][0]["count"]
+    assert_equal "<gem:tzinfo>", s["first_request"]["new_by_group"][0]["group"]
+    assert_equal 48, s["first_request"]["new_by_group"][0]["count"]
+    assert_equal "TZInfo", s["eager_top"][0]["name"]
+  end
+
+  def test_cloud_logging_and_cloudwatch
+    assert_equal 2, build("cloud_logging.jsonl")["summary"]["n"]
+    r = build("cloudwatch.log")
+    assert_equal 1, r["summary"]["n"]
+    assert_equal 1, r["summary"]["platform_init_ms"]["n"]
+    assert_equal 2, r["input"]["skipped_invalid"]
+    assert_equal 1, r["input"]["skipped_other"]
+  end
+
+  def test_cloudwatch_events_json_document
+    r = Hayaoki::ColdStartReport.build([fx("cloudwatch_events.json")])
+    assert_equal 1, r["summary"]["n"]
+    assert_equal 1, r["summary"]["platform_init_ms"]["n"]
+  end
+
+  def test_array_input
+    arr = "[" + fx("cloud_logging.jsonl").lines.join(",") + "]"
+    assert_equal 2, Hayaoki::ColdStartReport.build([arr])["summary"]["n"]
+  end
+
+  def test_key_order_independent
+    line = JSON.generate(JSON.parse(fx("bare.jsonl").lines[0]).sort.to_h)
+    assert_equal 1, Hayaoki::ColdStartReport.build(["2026 INFO #{line}\n"])["summary"]["n"]
+  end
+
+  def test_group_by_and_filters
+    r = build("bare.jsonl", group_by: "revision")
+    assert_equal %w[(none) redmine-00001 redmine-00002], r["groups"].keys
+    assert_equal 2, r["groups"]["redmine-00001"]["n"]
+    assert_equal %w[cloud_run lambda], build("bare.jsonl", group_by: "platform.kind")["groups"].keys
+    assert_equal %w[on-demand], build("bare.jsonl", group_by: "init_type")["groups"].keys - ["(none)"]
+    assert_equal 3, build("bare.jsonl", exclude_proactive: true)["summary"]["n"]
+    assert_equal 1, build("bare.jsonl", since: Time.utc(2026, 11, 9))["summary"]["n"]
+    assert_equal 3, build("bare.jsonl", until_: Time.utc(2026, 11, 9))["summary"]["n"]
+  end
+
+  def test_percentiles
+    s = Hayaoki::ColdStartReport::Stats
+    v = (1..100).to_a
+    assert_equal [50, 90, 99, 100], [s.percentile(v, 50), s.percentile(v, 90), s.percentile(v, 99), s.percentile(v, 100)]
+  end
+
+  def test_cli_text_stdin
+    code, out, = run_cli(["cold-start-report"], stdin: fx("bare.jsonl"))
+    assert_equal 0, code
+    assert_includes out, "4 cold start line(s)"
+    assert_includes out, "to_first_response"
+    assert_includes out, "issues#index"
+  end
+
+  def test_cli_json_files_group
+    code, out, = run_cli(["cold-start-report", "--format", "json", "--group-by", "revision", File.join(FX, "bare.jsonl")])
+    assert_equal 0, code
+    j = JSON.parse(out)
+    assert_equal "cold_start", j["hayaoki_report"]
+    assert_equal 1, j["groups"]["redmine-00002"]["n"]
+  end
+
+  def test_cli_errors_and_help
+    code, _, err = run_cli(["cold-start-report", "--since", "yesterday"])
+    assert_equal 1, code
+    assert_match(/invalid time/, err)
+    assert_equal 1, run_cli(["cold-start-report", "/nonexistent/x"])[0]
+    code, out, = run_cli(["cold-start-report", "--help"])
+    assert_equal 0, code
+    assert_includes out, "--group-by"
+  end
+
+  def test_empty_input
+    code, out, = run_cli(["cold-start-report"], stdin: "garbage\n")
+    assert_equal 0, code
+    assert_includes out, "0 cold start line(s)"
+  end
+end

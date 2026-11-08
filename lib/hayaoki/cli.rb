@@ -13,9 +13,10 @@ module Hayaoki
       new(stdout: stdout, stderr: stderr).run(argv)
     end
 
-    def initialize(stdout: $stdout, stderr: $stderr)
+    def initialize(stdout: $stdout, stderr: $stderr, stdin: nil)
       @out = stdout
       @err = stderr
+      @stdin = stdin
     end
 
     # 終了コードを返す。
@@ -24,6 +25,7 @@ module Hayaoki
       cmd = argv.shift
       case cmd
       when "boot-report" then boot_report(argv)
+      when "cold-start-report" then cold_start_report(argv)
       when "--version", "-v", "version" then @out.puts("hayaoki #{Hayaoki::VERSION}"); 0
       when nil, "-h", "--help", "help" then @out.puts(top_help); cmd.nil? ? 1 : 0
       else
@@ -68,7 +70,53 @@ module Hayaoki
 
     private
 
-    def top_help = "#{USAGE}\n       hayaoki --version\n\nRun `hayaoki boot-report --help` for options."
+    CSR_USAGE = "Usage: hayaoki cold-start-report [options] [FILE...]"
+
+    def top_help = "#{USAGE}\n       #{CSR_USAGE.sub("Usage: ", "")}\n       hayaoki --version\n\nRun `hayaoki <command> --help` for options."
+
+    def cold_start_report(argv)
+      opts = { format: "text", group_by: nil, since: nil, until_: nil, exclude_proactive: false }
+      parser = OptionParser.new do |o|
+        o.banner = "#{CSR_USAGE}\n\nReads hayaoki cold_start log lines from FILEs (default stdin)."
+        o.on("--group-by KEY", "revision|platform.kind|runtime.ruby|init_type|... (dotted path)") { |v| opts[:group_by] = v }
+        o.on("--since TIME", "only starts at or after TIME (ISO 8601, by start_at)") { |v| opts[:since] = parse_time(v) }
+        o.on("--until TIME", "only starts at or before TIME (ISO 8601, by start_at)") { |v| opts[:until_] = parse_time(v) }
+        o.on("--format FORMAT", %w[text json], "text|json (default text)") { |v| opts[:format] = v }
+        o.on("--exclude-proactive", "drop lines with idle_ms > 1000 (Lambda proactive init)") { opts[:exclude_proactive] = true }
+        o.on("-h", "--help", "show this help") { opts[:action] = :help }
+      end
+      files = parser.parse(argv)
+      if opts[:action] == :help
+        @out.puts(parser.help)
+        return 0
+      end
+      require "json"
+      require_relative "cold_start_report/runner"
+      texts = files.empty? ? [(@stdin || $stdin).read] : files.map { |f| File.read(f) }
+      result = ColdStartReport.build(texts, group_by: opts[:group_by], since: opts[:since], until_: opts[:until_],
+                                            exclude_proactive: opts[:exclude_proactive])
+      if opts[:format] == "json"
+        require_relative "cold_start_report/formatters/json"
+        @out.write(ColdStartReport::Formatters::Json.new.format(result))
+      else
+        require_relative "cold_start_report/formatters/text"
+        @out.write(ColdStartReport::Formatters::Text.new.format(result))
+      end
+      0
+    rescue OptionParser::ParseError => e
+      @err.puts "hayaoki: #{e.message}\n#{CSR_USAGE}"
+      1
+    rescue SystemCallError => e
+      @err.puts "hayaoki: #{e.message}"
+      1
+    end
+
+    def parse_time(str)
+      require "time"
+      Time.iso8601(str)
+    rescue ArgumentError
+      raise OptionParser::InvalidArgument, "invalid time '#{str}' (use ISO 8601, e.g. 2026-11-08T00:00:00Z)"
+    end
 
     def boot_report(argv)
       opts, app_dir = begin
