@@ -22,12 +22,13 @@ RUN apt-get update -qq && \
     apt-get install --no-install-recommends -y build-essential git libyaml-dev pkg-config && \
     rm -rf /var/lib/apt/lists /var/cache/apt/archives
 
-# The app is copied before `bundle install` because a path gem (the CI copy of hayaoki in
-# vendor/hayaoki) must exist at that point. With `gem "hayaoki"` from rubygems you can
-# copy only Gemfile and Gemfile.lock first, as the generated Dockerfile does.
-COPY . .
+# Copy only the dependency files first so the `bundle install` layer is cached. `rails new` creates
+# vendor/ (with .keep), so the COPY works for any generated app; CI puts a path gem in vendor/hayaoki.
+COPY Gemfile Gemfile.lock ./
+COPY vendor/ vendor/
 RUN bundle install && \
     rm -rf ~/.bundle/ "${BUNDLE_PATH}"/ruby/*/cache "${BUNDLE_PATH}"/ruby/*/bundler/gems/*/.git
+COPY . .
 
 # cold start: precompile the bootsnap cache at build time, so the first boot does not pay for it.
 RUN bundle exec bootsnap precompile --gemfile && \
@@ -46,6 +47,8 @@ COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0 /lambda-adapter /opt
 # ENV AWS_LWA_ASYNC_INIT=true
 
 # Lambda's file system is read-only except /tmp, so writes under /rails/tmp fail on Lambda.
+# Read-only bootsnap: use the cache built above and never write it. Set here, not in base, so the build-time precompile can write.
+ENV BOOTSNAP_READONLY=1
 # Logs go to stdout (CloudWatch Logs).
 EXPOSE 3000
 CMD ["bundle", "exec", "puma", "-C", "config/puma.rb"]

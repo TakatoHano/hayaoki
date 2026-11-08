@@ -110,7 +110,10 @@ jobs:
           end
           ROUTES
           cp "$GITHUB_WORKSPACE/examples/puma.rb" config/puma.rb
-          # keep the key out of the image, as Rails' .dockerignore does; the run uses SECRET_KEY_BASE
+          # --skip-docker leaves no .dockerignore; keep the key and local state out of the image
+          # (the run uses SECRET_KEY_BASE)
+          printf '%s\n' .git .gitignore '/log/*' '/tmp/*' '!/log/.keep' '!/tmp/.keep' \
+            /config/master.key '/config/credentials/*.key' '.env*' > .dockerignore
           rm -f config/master.key
           bundle install
 

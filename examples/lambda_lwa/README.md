@@ -20,7 +20,7 @@ Limits to know:
 - Init is limited to 10 s and is billed [L1, L2].
 - SnapStart does not support Ruby [L3]. Lambda Managed Instances do not support Ruby [L4].
 - Lambda may initialize an environment before a request arrives (proactive init) [L1]. The recorder logs the gap as `idle`; `hayaoki cold-start-report --exclude-proactive` drops lines with a gap over 1000 ms.
-- The file system is read-only except `/tmp`. The bootsnap cache from the build is read from `/rails/tmp`; whether bootsnap behaves well when it cannot write there on Lambda has not been tested here.
+- The file system is read-only except `/tmp`. The Dockerfile sets `BOOTSNAP_READONLY=1`, so bootsnap reads the cache precompiled at build in `/rails/tmp/cache/bootsnap` and does not try to write it (bootsnap 1.17+; stale entries fall back to compiling in memory).
 
 ## Steps
 
