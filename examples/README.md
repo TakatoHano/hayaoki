@@ -33,6 +33,10 @@ require "bootsnap/setup"
 
 With `RAILS_ENV=production` it is on by default. It writes one JSON line per process to stdout after the first non-probe response. See the [README](../README.md#in-situ-cold-start-logging) and [docs/design/phase2.md](../docs/design/phase2.md) for the fields and limits.
 
+## Secrets
+
+Do not copy `config/master.key` into the image (Rails' default `.dockerignore` excludes it). The images run as a non-root user and could not read a root-owned key anyway. Pass `RAILS_MASTER_KEY` or `SECRET_KEY_BASE` as an environment variable or a secret.
+
 ## Platform facts the templates rely on
 
 Checked against the vendor docs on 2026-11-08.
