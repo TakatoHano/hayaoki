@@ -100,6 +100,16 @@ class BootReportAggregatorTest < Minitest::Test
     assert_equal "foo", ns.first["owner"]
   end
 
+  def test_warns_when_requires_fell_back_to_last_feature
+    pl = run_payload.merge("resolve_fallbacks" => { "count" => 2, "examples" => ["./a", "b.so"] })
+    r = agg([pl])
+    w = r.warnings.find { _1.include?("could not be matched") }
+    refute_nil w
+    assert_includes w, "2 require(s)"
+    assert_includes w, "./a, b.so"
+    assert_nil agg([run_payload]).warnings.find { _1.include?("could not be matched") }
+  end
+
   def test_unattributed_category_is_boot_minus_attributed
     r = agg([run_payload])
     attributed = r.categories.reject { |k, _| k == "unattributed" }.sum { |_, v| v["self_ms"]["median"] }

@@ -52,6 +52,7 @@ class ProbeRailsTest < Minitest::Test
     refute_nil rep, "probe produced no output: #{r.err}"
     assert_equal "ok", rep["status"], rep["error"].inspect
     assert_empty rep["probe_errors"]
+    assert_equal 0, rep["resolve_fallbacks"]["count"], "require の名前から feature を特定できること: #{rep["resolve_fallbacks"].inspect}"
     assert_equal @dir, rep["rails_root"]
     assert_equal [], rep["pending_hooks"], "all Rails hooks installed"
 

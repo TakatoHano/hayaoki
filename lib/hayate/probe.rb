@@ -37,6 +37,10 @@ module Hayate::Probe
 
   @on = true
   @false_count = 0
+  # resolve_feature が名前から feature を見つけられず $LOADED_FEATURES.last を使った回数と例 (先頭 5 件)。
+  # 他スレッドの require が末尾にあると帰属を間違えうるので、件数を出して気付けるようにする
+  @fallbacks = 0
+  @fallback_names = []
   @false_time = 0.0
   @boot_end = nil
   @errors = []
@@ -129,18 +133,32 @@ module Hayate::Probe
     if name.getbyte(0) == 47 # 絶対パス: 完全一致、または name + ".ext"
       return fb == n ? f == name : (fb > n && fb - n <= 7 && f.getbyte(n) == 46 && f.start_with?(name) && !f.byteindex("/", n))
     end
-    if name.getbyte(0) == 46 && name.getbyte(1) == 47 # "./x" は "/x" として比較
-      name = name.byteslice(1, n - 1)
-      n -= 1
-    else
-      return true if fb == n && f == name
+    if name.getbyte(0) == 46 # "./x" や "../../x" は先頭の "./" と "../" を取り、"/x" の形で比べる
+      k = 0
+      while name.getbyte(k) == 46
+        if name.getbyte(k + 1) == 47 then k += 2
+        elsif name.getbyte(k + 1) == 46 && name.getbyte(k + 2) == 47 then k += 3
+        else break
+        end
+      end
+      if k.positive?
+        name = name.byteslice(k - 1, n - k + 1) # 直前の "/" を含める
+        n = name.bytesize
+      end
     end
+    # require "psych.so" は macOS では psych.bundle を読む (Ruby が .so を DLEXT に読み替える)。".so" を外して比べる
+    if n > 3 && name.end_with?(".so") && (f.end_with?(".bundle") || f.end_with?(".dll"))
+      name = name.byteslice(0, n - 3)
+      n -= 3
+    end
+    # name が "/" で始まるなら区切りは name 自身に含まれる。そうでなければ直前が "/" であること
+    sep = name.getbyte(0) == 47
+    return true if !sep && fb == n && f == name
     # 「/name」で終わる (name が拡張子付き) か「/name.ext」で終わる
-    if fb > n && f.getbyte(fb - n - 1) == 47 && f.end_with?(name)
-      return true
-    end
+    return true if f.end_with?(name) && (sep || (fb > n && f.getbyte(fb - n - 1) == 47))
     dot = f.byterindex(".")
-    return false unless dot && dot > n && f.getbyte(dot - n - 1) == 47
+    # dot == n は feature 自体が "name.ext" の場合 (Ruby に組み込まれた拡張は "prism/prism.so" のように登録される)
+    return false unless dot && dot >= n && (sep || dot == n || f.getbyte(dot - n - 1) == 47)
     f.byteindex(name, dot - n) == dot - n
   end
 
@@ -158,6 +176,8 @@ module Hayate::Probe
       return f if feature_match?(f, name)
       i -= 1
     end
+    @fallbacks += 1
+    @fallback_names << name if @fallback_names.size < 5
     last
   end
 
@@ -405,6 +425,7 @@ module Hayate::Probe
       pre_features: PRE_FEATURES, features: $LOADED_FEATURES.size,
       gc: { count0: GC_COUNT0, count1: GC.count, time0_ms: GC_TIME0, time1_ms: GC.stat(:time) },
       false_require: { count: @false_count, time_us: (@false_time * 1_000_000).round },
+      resolve_fallbacks: { count: @fallbacks, examples: @fallback_names },
       width: W, events: events, specs: specs, rails_root: rails_root,
       pwd_realpath: (File.realpath(Dir.pwd) rescue nil),
       libdir: defined?(::RbConfig) ? [::RbConfig::CONFIG["rubylibdir"], ::RbConfig::CONFIG["rubyarchdir"]].compact : [],

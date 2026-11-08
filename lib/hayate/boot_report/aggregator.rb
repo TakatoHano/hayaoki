@@ -37,6 +37,12 @@ module Hayate
         warnings = Array(meta["warnings"]).dup
         warnings << "#{bad.size} failed run(s) excluded from aggregation" unless bad.empty?
         warnings.concat(ok.flat_map { |p| Array(p["probe_warnings"]) + Array(p["probe_errors"]).map { |e| "probe error: #{e}" } }.uniq)
+        fb = ok.map { |p| p.dig("resolve_fallbacks", "count").to_i }.max.to_i
+        if fb.positive?
+          ex = ok.flat_map { |p| Array(p.dig("resolve_fallbacks", "examples")) }.uniq.first(5)
+          warnings << "#{fb} require(s) could not be matched to a loaded file and were attributed to the last loaded file; " \
+                      "attribution may be off (e.g. #{ex.join(", ")})"
+        end
         analyses = ok.map { |p| analyze(p) }
         thread_spans = analyses.map { |a| a[:background_spans] }.max.to_i
         warnings << "#{thread_spans} span(s) recorded on background threads; attribution is approximate and they are excluded from totals" if thread_spans.positive?
