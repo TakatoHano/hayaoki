@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
+ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)  # リポジトリの場所
 # Spike 4-3: シンボリックリンク経由のディレクトリで require_relative の基準パスがネイティブと一致するか
-P=/path/to/home/workspace/hayaoki/spike/04_probe/probe.rb
-D=/tmp/hayaoki-spike/symt
+P=$ROOT/spike/04_probe/probe.rb
+D=${SPIKE_DIR:-${TMPDIR:-/tmp}/hayaoki-spike}/symt
 rm -rf $D; mkdir -p $D/real/sub
 echo 'puts "real target"' > $D/real/target.rb
 echo 'puts "WRONG target (symlink-parent)"' > $D/target.rb

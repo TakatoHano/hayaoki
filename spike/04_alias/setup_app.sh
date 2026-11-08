@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spike 4: spike_app を複製し、既知の sleep を持つダミー gem (slowgem) と on_load フックを足した検証用アプリを作る
 set -e
-S=/tmp/hayaoki-spike
+S=${SPIKE_DIR:-${TMPDIR:-/tmp}/hayaoki-spike}
 export GEM_HOME=$S/gems GEM_PATH=$S/gems
 A=$S/spike04_app
 rm -rf $A && cp -R $S/spike_app $A && rm -rf $A/tmp/cache

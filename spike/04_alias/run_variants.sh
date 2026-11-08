@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
+ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)  # リポジトリの場所
 # Spike 4-2 実行: 各方式で boot の成否、ラッパー呼出回数、bundled_gems 警告の保持、boot 時間 (warm bootsnap) を比較
-S=/tmp/hayaoki-spike
+S=${SPIKE_DIR:-${TMPDIR:-/tmp}/hayaoki-spike}
 export GEM_HOME=$S/gems GEM_PATH=$S/gems RAILS_ENV=production
-P=/path/to/home/workspace/hayaoki/spike/04_alias/probe_variants.rb
+P=$ROOT/spike/04_alias/probe_variants.rb
 cd $S/spike04_app || exit 1
 CMD='require "./config/environment"; $stderr.puts "boot ok"; begin; Kernel.require "fiddle"; rescue LoadError; end'
 for v in none naive bindcall callee chain runtime; do

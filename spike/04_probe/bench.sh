@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
+ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)  # リポジトリの場所
 # Spike 4-3: プロトタイプ probe のオーバーヘッド (warm bootsnap / bootsnap 無し)。交互に N 回実行し中央値と p90 を比較
-S=/tmp/hayaoki-spike
+S=${SPIKE_DIR:-${TMPDIR:-/tmp}/hayaoki-spike}
 export GEM_HOME=$S/gems GEM_PATH=$S/gems RAILS_ENV=production
-P=/path/to/home/workspace/hayaoki/spike/04_probe/probe.rb
+P=$ROOT/spike/04_probe/probe.rb
 N=${N:-15}
 cd $S/spike04_app || exit 1
 ruby -e 'require "./config/environment"' >/dev/null 2>&1

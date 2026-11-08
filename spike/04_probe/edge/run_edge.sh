@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
+ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)  # リポジトリの場所
 # Spike 4-3 エッジケース: スレッド内 require / 例外 / boot 失敗時の部分結果 / exit! / --disable-gems / fork
-P=/path/to/home/workspace/hayaoki/spike/04_probe/probe.rb
-D=/path/to/home/workspace/hayaoki/spike/04_probe/edge
-O=/tmp/hayaoki-spike/edge_out.json
+P=$ROOT/spike/04_probe/probe.rb
+D=$ROOT/spike/04_probe/edge
+O=${SPIKE_DIR:-${TMPDIR:-/tmp}/hayaoki-spike}/edge_out.json
 cd $D
 summ() { [ -f $O ] && ruby -rjson -e 'd=JSON.parse(File.read(ARGV[0])); w=d["width"]; ev=d["events"].each_slice(w).to_a
   puts "  status=#{d["status"]} err=#{d.dig("error","class")} spans=#{ev.size}"
