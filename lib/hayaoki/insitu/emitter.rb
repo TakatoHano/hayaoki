@@ -12,11 +12,10 @@ module Hayaoki
     # Builds the v1 line (phase2.md §3.1) and writes it once per process.
     module Emitter
       TOP_EAGER = 5
-      MAX_BYTES = 4096
 
       module_function
 
-      # status: "ok" | "no_request" | "boot_error". Returns the line, or nil when this process
+      # status: "ok" | "no_request" | "incomplete" | "boot_error". Returns the line, or nil when this process
       # already emitted or something failed (then one stderr warning).
       def emit(state, status)
         return nil unless state&.claim_emit!
@@ -42,14 +41,11 @@ module Hayaoki
       end
 
       # `start_ms`: process start on the Clock scale (nil = unknown -> origin is the hayaoki load).
+      # :auto uses State#start_ms (read at load, so a preloaded worker measures from the master's start).
       # `facts`: the "proc" object; injectable for tests.
       def build(state, status, start_ms: :auto, facts: nil, env: ENV)
         features = $LOADED_FEATURES.size
-        tck = nil
-        if start_ms == :auto
-          tck = Clock.clk_tck
-          start_ms = Clock.process_start_ms(tck: tck)
-        end
+        start_ms = state.start_ms if start_ms == :auto
         origin = start_ms || state.load_ms
         m = State::MARKS.to_h { |k| [k.to_s, ms(Clock.since_start(state.marks[k], origin))] }
 
@@ -94,7 +90,7 @@ module Hayaoki
           "phases_ms" => phases,
           "eager_top" => state.eager_by.sort_by { |_, v| -v }.first(TOP_EAGER).map { |k, v| [k, ms(v)] },
           "first_request" => state.first_request,
-          "proc" => facts || proc_facts(state, features, tck || Clock.clk_tck),
+          "proc" => facts || proc_facts(state, features, Clock.clk_tck),
         )
         h
       end
@@ -103,6 +99,7 @@ module Hayaoki
         case status
         when "boot_error" then "hayaoki cold start: boot error"
         when "no_request" then "hayaoki cold start: ready #{ready || "?"}ms, no request"
+        when "incomplete" then "hayaoki cold start: ready #{ready || "?"}ms, first response not finished"
         else
           # HAYAOKI_INSITU_EMIT=ready emits before any request: no "first response" part
           fre ? "hayaoki cold start: ready #{ready || "?"}ms, first response #{fre}ms" : "hayaoki cold start: ready #{ready || "?"}ms"

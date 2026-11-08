@@ -42,19 +42,26 @@ module Hayaoki
       MARKS = %i[loaded bundler_require_start bundler_require_end initialize_start initialize_end
                  first_probe first_request_start first_response_end forked].freeze
 
-      attr_reader :id, :load_pid, :load_ms, :entry, :marks, :eager_by, :out, :emit_mode, :probe_hits
-      attr_accessor :boot_error, :i18n_loaded, :first_request, :bootsnap_cache, :eager_ms
+      attr_reader :id, :load_pid, :load_ms, :start_ms, :entry, :marks, :eager_by, :out, :emit_mode, :probe_hits, :fork_gen
+      attr_accessor :boot_error, :i18n_loaded, :first_request, :bootsnap_cache, :eager_ms, :server
 
-      def initialize(env: ENV, entry: "boot_rb", load_ms: Clock.now_ms, pid: Process.pid, id: nil, bootsnap_cache: nil)
+      # `start_ms`: process start (P1) on the Clock scale, read once here so a forked worker
+      # keeps the start of the process that booted the app (preload_app!). :auto reads /proc.
+      def initialize(env: ENV, entry: "boot_rb", load_ms: Clock.now_ms, pid: Process.pid, id: nil, bootsnap_cache: nil,
+                     start_ms: :auto)
         @id = id || Random.urandom(4).unpack1("H*")
         @load_pid = pid
         @load_ms = load_ms
+        @start_ms = start_ms == :auto ? Clock.process_start_ms : start_ms
+        # nil until initialize! snapshots Insitu.server_process? (false in rake / console / job workers)
+        @server = nil
         @entry = entry
         @marks = {loaded: load_ms}
         @eager_by = Hash.new(0.0)
         @eager_ms = 0.0
         @eager_depth = 0
         @probe_hits = 0
+        @fork_gen = 0
         @lock = Mutex.new
         @first_pid = nil
         @emitted_pid = nil
@@ -109,8 +116,19 @@ module Hayaoki
       def forked_children? = @forker_pid == Process.pid
 
       # In a forked child (e.g. a Puma worker after preload): the boot marks are the parent's;
-      # this records when the child itself started.
-      def forked_in_child!(t = Clock.now_ms) = (@marks[:forked] = t)
+      # this records when the child itself started. First-request facts are per process, so a
+      # child forked from a worker that already served (Puma fork_worker) starts them over.
+      def forked_in_child!(t = Clock.now_ms)
+        @fork_gen = fork_gen + 1 # middleware compares this instead of calling getpid per request
+        @marks[:forked] = t
+        %i[first_probe first_request_start first_response_end].each { |k| @marks.delete(k) }
+        @first_request = nil
+        @probe_hits = 0
+      end
+
+      # The first request started in this process but its response never finished
+      # (body never closed: hijack, a stuck request, or the process was stopped).
+      def first_request_incomplete? = @marks.key?(:first_request_start) && !@marks.key?(:first_response_end)
 
       def worker? = Process.pid != @load_pid
 

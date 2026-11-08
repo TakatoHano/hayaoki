@@ -102,6 +102,24 @@ class InsituMiddlewareTest < Minitest::Test
     assert_equal 1, lines.size
   end
 
+  # Non-Rails Rack app: `use Hayaoki::Insitu::Middleware` picks up Insitu.state.
+  def test_usable_with_rack_builder
+    require "rack/builder"
+    saved = I.state
+    I.instance_variable_set(:@state, @state)
+    app = @app
+    built = ::Rack::Builder.new do
+      use Hayaoki::Insitu::Middleware
+      run app
+    end.to_app
+    get("/up", built)
+    get("/", built)
+    assert_equal 1, lines.size
+    assert_equal 1, lines[0]["first_request"]["probe_hits"]
+  ensure
+    I.instance_variable_set(:@state, saved)
+  end
+
   def test_nil_state_is_pass_through
     mw = I::Middleware.new(@app, nil)
     assert_equal 200, get("/", mw)[0]

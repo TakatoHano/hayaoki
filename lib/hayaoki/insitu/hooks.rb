@@ -73,6 +73,7 @@ module Hayaoki
 
     class << self
       def start!(env: ENV, load_ms: Clock.now_ms)
+        @program = program_name
         @state = State.new(env: env, entry: detect_entry, load_ms: load_ms, bootsnap_cache: bootsnap_cache_before_setup(env))
         ::Bundler::Runtime.prepend(Hooks::BundlerHook) if defined?(::Bundler::Runtime)
         install_rails_hooks if defined?(::Rails::Application)
@@ -115,6 +116,9 @@ module Hayaoki
       def before_initialize(app)
         st = @state or return
         st.mark(:initialize_start)
+        # Snapshot here: `rails db:prepare` runs its tasks inside Rake.with_application, which
+        # restores an empty Rake.application before at_exit, so a later check would say "server".
+        st.server = server_process? if st.server.nil?
         unless @middleware_inserted || st.emit_mode == "ready"
           require_relative "middleware"
           # Recorded on the config proxy; Rails applies it when it builds the stack (Finisher).
@@ -141,6 +145,7 @@ module Hayaoki
         st = @state or return
         st.mark(:initialize_end)
         return unless st.emit_mode == "ready"
+        return unless st.server != false && server_process?
         st.i18n_loaded = i18n_loaded?
         require_relative "emitter"
         Emitter.emit(st, "ok")
@@ -148,10 +153,24 @@ module Hayaoki
         warn_once("initialize", e)
       end
 
-      # false for rake (also `rails db:migrate`, which runs through Rake), `rails console` and
-      # `rails runner`. Anything else (puma, rackup, a Lambda adapter, custom scripts) counts as a server.
+      # Job runners started by their own executable. Matched on the first word of $0 at load
+      # (Sidekiq later rewrites $0 to "sidekiq 7.x app [0 of 5 busy]"; bin/jobs is Solid Queue).
+      NON_SERVER_PROGRAMS = %w[sidekiq jobs good_job solid_queue sidekiqswarm].freeze
+
+      def program_name
+        File.basename($PROGRAM_NAME.to_s.split.first.to_s)
+      rescue StandardError
+        nil
+      end
+
+      # false for rake (also `rails db:migrate`, which runs through Rake), `rails console`,
+      # `rails runner` and the job runners above. Anything else (puma, rackup, a Lambda adapter,
+      # custom scripts) counts as a server.
       def server_process?
+        return false if NON_SERVER_PROGRAMS.include?(@program || program_name)
         return false if defined?(::Rake) && ::Rake.respond_to?(:application) && !::Rake.application.top_level_tasks.empty?
+        # `bin/rails <task>` falls back to RakeCommand (loaded only then); `rails server` loads ServerCommand.
+        return false if defined?(::Rails::Command::RakeCommand) && !defined?(::Rails::Command::ServerCommand)
         return false if defined?(::Rails::Console)
         return false if defined?(::Rails::Command::RunnerCommand) && !defined?(::Rails::Command::ServerCommand)
         true
@@ -165,15 +184,22 @@ module Hayaoki
         nil
       end
 
-      # Fallback line for a server process that got no request (or failed to boot). No
-      # "no_request" line from a process that forked children (Puma cluster master, the
-      # workers write their own) or from a non-server command (rake, console, runner).
+      # Fallback line at exit. "incomplete": this process started its first request but the
+      # response never finished (written even by a forking parent or a non-server). "boot_error"
+      # is always written. "no_request" only from a server process that did not fork children
+      # (Puma cluster master: the workers write their own) and not from rake, console, runner or
+      # a job runner (State#server, snapshotted at initialize!, or the check at exit).
       def at_exit!
         st = @state or return
         return if st.emitted?
-        return if !st.boot_error && (st.forked_children? || !server_process?)
+        status =
+          if st.boot_error then "boot_error"
+          elsif st.first_request_incomplete? then "incomplete"
+          elsif st.forked_children? || st.server == false || !server_process? then return
+          else "no_request"
+          end
         require_relative "emitter"
-        Emitter.emit(st, st.boot_error ? "boot_error" : "no_request")
+        Emitter.emit(st, status)
       rescue StandardError => e
         warn_once("at_exit", e)
       end

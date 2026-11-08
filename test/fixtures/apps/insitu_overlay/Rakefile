@@ -1,0 +1,9 @@
+# Copied over rails_min by test/insitu/integration_test.rb (used by rails_task.rb).
+require_relative "config/application"
+Rails.application.load_tasks
+
+namespace :hayaoki do
+  desc "boots the app like db:prepare does, then does nothing"
+  task noop: :environment do
+  end
+end

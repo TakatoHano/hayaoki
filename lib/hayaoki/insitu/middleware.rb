@@ -6,7 +6,8 @@ module Hayaoki
   module Insitu
     # Inserted at position 0 of the Rails stack (Insitu.before_initialize). Watches the first
     # non-probe request of the process, emits the line when its body is closed, then becomes a
-    # pass-through (one ivar check per request).
+    # pass-through (one pid compare per request). Also usable in a non-Rails Rack app:
+    # `use Hayaoki::Insitu::Middleware` (pass-through when insitu is off).
     class Middleware
       TOP_GROUPS = 5
 
@@ -14,11 +15,11 @@ module Hayaoki
         @app = app
         @state = state
         @ignore = state ? state.ignore_paths : []
-        @done = state.nil?
+        @done_gen = nil # fork generation that already claimed or gave up; forked children start over
       end
 
       def call(env)
-        return @app.call(env) if @done
+        return @app.call(env) if @state.nil? || @done_gen == @state.fork_gen
         if @ignore.include?(env["PATH_INFO"])
           @state.probe_hit!
           return @app.call(env)
@@ -31,11 +32,11 @@ module Hayaoki
 
       def claim
         won = @state.claim_first_request!
-        @done = true
+        @done_gen = @state.fork_gen
         won
       rescue StandardError => e
         Insitu.warn_once("middleware", e)
-        @done = true
+        @done_gen = @state.fork_gen
         false
       end
 

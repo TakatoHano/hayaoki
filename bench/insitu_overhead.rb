@@ -125,7 +125,9 @@ delta_req = (req_b["median"] - req_a["median"]).round(1)
 require_relative "../lib/hayaoki/insitu/middleware"
 micro = lambda do
   app = ->(_env) { [200, {}, []] }
-  mw = Hayaoki::Insitu::Middleware.new(app, nil) # 素通し状態 (@done)
+  state = Struct.new(:fork_gen, :ignore_paths).new(0, ["/up"])
+  mw = Hayaoki::Insitu::Middleware.new(app, state)
+  mw.instance_variable_set(:@done_gen, 0) # 最初のリクエストの後の素通し状態
   env = { "PATH_INFO" => "/" }
   n = 1_000_000
   Array.new(5) do

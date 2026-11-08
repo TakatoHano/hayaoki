@@ -86,7 +86,7 @@ require "bootsnap/setup"
 
 Do not require it before `bundler/setup`: RubyGems could activate a hayaoki version that conflicts with the lockfile. `gem "hayaoki", require: "hayaoki/insitu"` also works, but then the start of `Bundler.require` is not recorded.
 
-The line is written to stdout after the first non-health-check response (at exit if no request came). It is a bare JSON object, so Cloud Logging stores it in `jsonPayload` and CloudWatch Logs Insights can query its fields. It contains:
+The line is written to stdout after the first non-health-check response. If no request came, a `no_request` line is written at exit; if the first request started but its response never finished (for example the process was stopped mid-request), an `incomplete` line is written instead. It is a bare JSON object, so Cloud Logging stores it in `jsonPayload` and CloudWatch Logs Insights can query its fields. It contains:
 
 - marks and phases in ms since process start (`phases_ms.to_ready`, `initialize`, `eager_load`, `first_request`, and so on), with the process start read from `/proc/self/stat` on Linux
 - `platform` (Cloud Run, Lambda, or generic), Ruby, Rails and hayaoki versions, and whether bootsnap and its cache were present
@@ -107,8 +107,22 @@ Known limitations:
 - If `config/boot.rb` loads it but the app never calls `Bundler.require`, the Rails hooks are not installed: there are no initialize or eager-load marks and no middleware, only the line at exit.
 - Eager-load timing covers the namespaces in `config.eager_load_namespaces` at the start of `initialize!`. A namespace added later by an initializer is not timed.
 - `proc.i18n_loaded` is informative only when `config.eager_load` is false. With eager load on it is always true.
-- The exit-time line is not written by rake tasks, `rails console`, `rails runner`, or a process that forked children (for example the Puma cluster master; its workers write their own lines).
+- The `no_request` line is not written by rake tasks (including `bin/rails db:prepare` and other tasks run through `bin/rails`), `rails console`, `rails runner`, or a process that forked children (for example the Puma cluster master; its workers write their own lines). With `HAYAOKI_INSITU_EMIT=ready` the same processes write no line.
+- Job processes started as `sidekiq`, `bin/jobs` (Solid Queue) or `good_job` are skipped by program name. Other non-web processes that boot the app from the same image (custom job runners, a Solid Queue supervisor forked from Puma by `plugin :solid_queue`) write a `no_request` line at exit; set `HAYAOKI_INSITU=0` for them.
+- Puma cluster with `preload_app!`: phases in a worker's line are measured from the master's start, and `marks_ms.forked` is when the worker was forked. A worker restarted long after boot therefore shows a large `to_first_response`; check `forked`.
+- Lambda Web Adapter's readiness check path defaults to `/`. If `AWS_LWA_READINESS_CHECK_PATH` is not set, the adapter's check to `/` counts as the first request. Set `AWS_LWA_READINESS_CHECK_PATH=/up` (the recorder then ignores it), or add the path to `HAYAOKI_INSITU_IGNORE_PATHS`. `/` is not ignored automatically, because it may also be a real first request.
+- The process start comes from `/proc/self/stat` and `CLOCK_BOOTTIME`. This has not been checked on Cloud Run's first-generation execution environment (gVisor). If `start_at` or `pre_load` look wrong there, use the second-generation environment (`run.googleapis.com/execution-environment: gen2`).
 - Time before the process starts (image pull, sandbox creation) is not visible to it. Use the platform's numbers (Lambda `Init Duration`, Cloud Run startup latency) for that.
+
+Rack apps without Rails: the Rails hooks do nothing there, so add the middleware yourself. Load `hayaoki/insitu` as early as possible (after `bundler/setup`), then in `config.ru`:
+
+```ruby
+require "hayaoki/insitu"
+require "hayaoki/insitu/middleware"
+use Hayaoki::Insitu::Middleware   # passes requests through untouched when the recorder is off
+```
+
+There are no initialize or eager-load marks in this case; `to_ready` comes from the first health-check request, if any.
 
 Deployment templates for Cloud Run and Lambda (Lambda Web Adapter) are in [`examples/`](examples/).
 

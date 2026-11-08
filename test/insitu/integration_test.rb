@@ -22,7 +22,7 @@ class InsituIntegrationTest < Minitest::Test
     end
   end
 
-  def run_app(paths, env = {})
+  def run_app(paths, env = {}, script = "drive.rb")
     skip "rails is not installed" unless self.class.rails_available?
     dir = self.class.app_dir
     skip "bundle lock --local failed: #{self.class.lock_error.to_s[0, 300]}" if self.class.lock_error
@@ -31,7 +31,7 @@ class InsituIntegrationTest < Minitest::Test
     FileUtils.rm_f(out)
     e = CLEAN_ENV.merge("HAYAOKI_INSITU" => "1", "RAILS_ENV" => "production", "HAYAOKI_INSITU_OUT" => out,
                         "DRIVE_PATHS" => paths.join(","), "K_SERVICE" => nil, "AWS_LAMBDA_FUNCTION_NAME" => nil).merge(env)
-    so, se, st = Open3.capture3(e, RbConfig.ruby, "-I#{File.join(ROOT, "lib")}", "drive.rb", chdir: dir)
+    so, se, st = Open3.capture3(e, RbConfig.ruby, "-I#{File.join(ROOT, "lib")}", script, chdir: dir)
     assert st.success?, "child failed: #{so}\n#{se}"
     refute_match(/hayaoki insitu/, se)
     File.exist?(out) ? File.readlines(out) : []
@@ -103,6 +103,13 @@ class InsituIntegrationTest < Minitest::Test
     assert_nil l["first_request"]
     assert_nil l["marks_ms"]["first_request_start"]
     assert_match(/\Ahayaoki cold start: ready \d+ms\z/, l["message"])
+  end
+
+  # `bin/rails db:prepare` (run by the default docker-entrypoint before the server) must not
+  # write a no_request line, nor an ok line in ready mode.
+  def test_rails_rake_task_writes_nothing
+    assert_empty run_app([], {}, "rails_task.rb")
+    assert_empty run_app([], {"HAYAOKI_INSITU_EMIT" => "ready"}, "rails_task.rb")
   end
 
   def test_off_writes_nothing

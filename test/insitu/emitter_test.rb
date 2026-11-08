@@ -43,6 +43,24 @@ class InsituEmitterTest < Minitest::Test
     assert_nil I.state
   end
 
+  # Start read once at load (State#start_ms) and used by default: a preloaded worker keeps
+  # the master's start, so boot phases stay on the same origin.
+  def test_build_uses_state_start_ms_by_default
+    st = state(full_marks, start_ms: 820.0)
+    h = I::Emitter.build(st, "ok", facts: FACTS, env: {})
+    assert_equal 180, h["marks_ms"]["loaded"]
+    assert_equal 180, h["phases_ms"]["pre_load"]
+    assert_equal 1030, h["phases_ms"]["initialize"]
+    assert_equal "proc_stat", h["start_source"]
+  end
+
+  def test_incomplete_message
+    h = I::Emitter.build(state({initialize_end: 500, first_request_start: 600}), "incomplete", start_ms: nil, facts: FACTS, env: {})
+    assert_equal "incomplete", h["status"]
+    assert_match(/first response not finished/, h["message"])
+    assert_nil h["phases_ms"]["to_first_response"]
+  end
+
   def test_build_with_process_start
     st = state
     st.eager_span(Module.new.tap { |m| def m.name = "TZInfo" }) { nil }
