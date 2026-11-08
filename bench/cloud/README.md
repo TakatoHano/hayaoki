@@ -21,6 +21,8 @@ private services, produce cold starts, collect the `hayaoki` `cold_start` log li
 - Lambda: local docker (`--platform linux/amd64`), or `--builder cloudbuild`: Cloud Build pushes only to a private
   Artifact Registry repo, then `crane copy` (run locally) copies the image to ECR. Passwords go to `crane auth login`
   through stdin only; no AWS credential is given to Cloud Build. Needs `crane` (`brew install crane`).
+  The Lambda Web Adapter image is first copied locally with crane into the same private AR repo (Cloud Build's
+  anonymous pulls from public.ecr.aws can hit rate limits); teardown removes it with the repo.
 - Minimal app generation needs `rails` 8.0.2 locally, or docker (falls back to a `ruby:3.4.7-slim` container).
 
 ## Privacy

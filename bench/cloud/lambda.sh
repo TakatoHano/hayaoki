@@ -143,6 +143,7 @@ if [[ $SKIP_BUILD == 0 ]]; then
       "${GC[@]}" artifacts repositories create "$REPO" --repository-format docker --location "$GCP_REGION_FIXED" \
         --description "hayaoki bench images (delete with teardown.sh)"
     ar_keep_latest "$REPO" "$GCP_REGION_FIXED"
+    mirror_lwa_to_ar "$GCP_REGION_FIXED-docker.pkg.dev/$PROJECT/$REPO/${LWA_PUBLIC_IMAGE##*/}" "$ctx"
     build_with_cloud_build "$AR_IMAGE" "$ctx" "$tgt"
     copy_ar_to_ecr "$AR_IMAGE" "$IMAGE"
   else
