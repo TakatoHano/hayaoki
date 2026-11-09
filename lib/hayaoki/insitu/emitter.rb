@@ -80,6 +80,8 @@ module Hayaoki
           "to_first_response" => fre,
         }
 
+        cpu = cpu_phases(state, ready_source)
+
         h = {
           "hayaoki" => "cold_start", "v" => 1,
           "severity" => status == "boot_error" ? "ERROR" : "INFO",
@@ -98,11 +100,37 @@ module Hayaoki
           "runtime" => runtime(state, env),
           "marks_ms" => m,
           "phases_ms" => phases,
+          "phases_cpu_ms" => cpu,
           "eager_top" => state.eager_by.sort_by { |_, v| -v }.first(TOP_EAGER).map { |k, v| [k, ms(v)] },
           "first_request" => state.first_request,
           "proc" => facts || proc_facts(state, features, Clock.clk_tck),
+          "limits" => limits(state),
         )
         h
+      end
+
+      # CPU ms over the spans of the matching phases_ms entries (load_* start at the loaded mark).
+      # In a forked child the CPU clock restarts, so a span ending in the child has no value.
+      def cpu_phases(state, ready_source)
+        c = state.cpu_marks
+        child = state.marks.key?(:forked)
+        ready_key = ready_source == "probe" ? :first_probe : (ready_source == "initialize" ? :initialize_end : nil)
+        {
+          "bundler_require" => ms(diff(c[:bundler_require_start], c[:bundler_require_end])),
+          "initialize" => ms(diff(c[:initialize_start], c[:initialize_end])),
+          "load_to_ready" => ready_key && !(child && ready_key == :first_probe) ? ms(diff(c[:loaded], c[ready_key])) : nil,
+          "load_to_first_response" => child ? nil : ms(diff(c[:loaded], c[:first_response_end])),
+        }
+      end
+
+      # load-time fields from State plus mem_max_mb read now; key order as in the design
+      def limits(state)
+        l = state.limits || {}
+        require_relative "limits"
+        {"cgroup" => l["cgroup"], "cpu_quota" => l["cpu_quota"], "nproc" => l["nproc"],
+         "mem_max_mb" => Limits.mem_max_mb, "sandbox" => l["sandbox"]}
+      rescue StandardError, LoadError
+        nil
       end
 
       # nil when start_ms is usable as the origin; otherwise {"reason", "pre_load_ms"} for the line
@@ -135,7 +163,7 @@ module Hayaoki
 
       def proc_facts(state, features, tck)
         {
-          "cpu_ms" => ms(Clock.cpu_ms), "rss_kb" => ProcFS.rss_kb, "uptime_ms" => ProcFS.uptime_ms,
+          "cpu_ms" => ms(Clock.cpu_ms), "cpu_at_load_ms" => state.marks.key?(:forked) ? nil : ms(state.cpu_marks[:loaded]), "rss_kb" => ProcFS.rss_kb, "uptime_ms" => ProcFS.uptime_ms,
           "pid1_age_ms" => ProcFS.pid1_age_ms(clk_tck: tck),
           "gc_count" => GC.count, "gc_time_ms" => Insitu.gc_time_ms, "features" => features,
           "i18n_loaded" => state.i18n_loaded.nil? ? Insitu.i18n_loaded? : state.i18n_loaded,

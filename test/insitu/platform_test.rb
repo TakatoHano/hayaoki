@@ -21,13 +21,25 @@ class InsituPlatformTest < Minitest::Test
            "AWS_LAMBDA_FUNCTION_MEMORY_SIZE" => "1024", "AWS_LAMBDA_INITIALIZATION_TYPE" => "on-demand",
            "AWS_LAMBDA_LOG_STREAM_NAME" => "2026/11/08/[$LATEST]abc"}
     assert_equal({"kind" => "lambda", "function" => "f", "version" => "$LATEST", "memory_mb" => 1024,
-                  "init_type" => "on-demand", "log_stream" => "2026/11/08/[$LATEST]abc"}, P.fields(env))
+                  "init_type" => "on-demand", "log_stream" => "2026/11/08/[$LATEST]abc",
+                  "lwa_async_init" => false}, P.fields(env))
+  end
+
+  def test_lambda_lwa_async_init_true_only
+    base = {"AWS_LAMBDA_FUNCTION_NAME" => "f"}
+    assert_equal true, P.fields(base.merge("AWS_LWA_ASYNC_INIT" => "true"))["lwa_async_init"]
+    assert_equal true, P.fields(base.merge("AWS_LWA_ASYNC_INIT" => " TRUE "))["lwa_async_init"]
+    assert_equal false, P.fields(base.merge("AWS_LWA_ASYNC_INIT" => "false"))["lwa_async_init"]
+    assert_equal false, P.fields(base.merge("AWS_LWA_ASYNC_INIT" => "1"))["lwa_async_init"]
+    assert_equal false, P.fields(base.merge("AWS_LWA_ASYNC_INIT" => ""))["lwa_async_init"]
+    refute P.fields({"K_SERVICE" => "s", "AWS_LWA_ASYNC_INIT" => "true"}).key?("lwa_async_init")
+    refute_includes P.fields(base.merge("AWS_LWA_ASYNC_INIT" => "secret-value")).values.map(&:to_s), "secret-value"
   end
 
   def test_cloud_run_wins_and_empty_ignored
     assert_equal "cloud_run", P.kind({"K_SERVICE" => "s", "AWS_LAMBDA_FUNCTION_NAME" => "f"})
     assert_equal "generic", P.kind({"K_SERVICE" => ""})
-    assert_equal({"kind" => "lambda", "function" => "f"}, P.fields({"AWS_LAMBDA_FUNCTION_NAME" => "f", "AWS_LAMBDA_FUNCTION_MEMORY_SIZE" => "x"}))
+    assert_equal({"kind" => "lambda", "function" => "f", "lwa_async_init" => false}, P.fields({"AWS_LAMBDA_FUNCTION_NAME" => "f", "AWS_LAMBDA_FUNCTION_MEMORY_SIZE" => "x"}))
   end
 
   def test_ignore_paths

@@ -26,7 +26,8 @@ module Hayaoki
             mem = env["AWS_LAMBDA_FUNCTION_MEMORY_SIZE"].to_s
             {"function" => env["AWS_LAMBDA_FUNCTION_NAME"], "version" => env["AWS_LAMBDA_FUNCTION_VERSION"],
              "memory_mb" => mem.match?(/\A\d+\z/) ? mem.to_i : nil,
-             "init_type" => env["AWS_LAMBDA_INITIALIZATION_TYPE"], "log_stream" => env["AWS_LAMBDA_LOG_STREAM_NAME"]}
+             "init_type" => env["AWS_LAMBDA_INITIALIZATION_TYPE"], "log_stream" => env["AWS_LAMBDA_LOG_STREAM_NAME"],
+             "lwa_async_init" => env["AWS_LWA_ASYNC_INIT"].to_s.strip.downcase == "true"}
           else {}
           end
         {"kind" => kind(env)}.merge(h.reject { |_, v| v.nil? || v == "" })

@@ -81,14 +81,14 @@ Platform lines already parsed by the reader: Lambda `Init Duration`. New in the 
 | `limits.nproc` | `Etc.nprocessors` (honours affinity) | at load | 1 syscall | not a quota; a hint only |
 | `limits.mem_max_mb` | v2 `memory.max` / v1 `memory.limit_in_bytes`; "max" or a value ≥ 2^60 → null | at emit | 1 read | Lambda falls back to `platform.memory_mb` in the report |
 | `limits.sandbox` | `"gvisor"` when `/proc/version` matches the gVisor fake kernel string; else null | at load | 1 read | heuristic; the string itself is never logged |
-| `proc.cpu_at_load_ms` | `Clock.cpu_ms` at the `loaded` mark | at load | ~1 µs | lets the report compute CPU share from load (gen2, rejected starts) |
+| `proc.cpu_at_load_ms` | `Clock.cpu_ms` at the `loaded` mark (null in a forked child) | at load | ~1 µs | lets the report compute CPU share from load (gen2, rejected starts) |
 | `phases_cpu_ms` | `Clock.cpu_ms` at the bundler / initialize / ready / first-response marks | at each mark | ~1 µs × 5 | like `phases_ms`: duplicates derivable data so log queries need no math |
 
 Overhead: all reads together are well under 1 ms, done once per process, inside the 0.2 budget (phase2.md §2.3). Every reader returns nil on any error and never raises (same pattern as `ProcFS`).
 
 Privacy: only numbers and fixed tokens (`v1`/`v2`/`gvisor`). No paths, no kernel version string, no hostnames, no env values. `phases_cpu_ms` is process CPU time, which says nothing about requests or users.
 
-Not added: per-thread CPU, `/proc/pressure/*` (PSI; often missing in gVisor and Firecracker, and the cost of reading it at each mark is not worth it for 0.3), `memory.peak` (newer kernels only; candidate for later), any env flag such as `AWS_LWA_ASYNC_INIT` (Q3).
+Not added: per-thread CPU, `/proc/pressure/*` (PSI; often missing in gVisor and Firecracker, and the cost of reading it at each mark is not worth it for 0.3), `memory.peak` (newer kernels only; candidate for later), other env flags. The one exception is `platform.lwa_async_init` (Lambda only, boolean, true only when the value is `"true"`; the value is never logged; Q3).
 
 ---
 
@@ -122,9 +122,9 @@ Wording (text output; `{}` are evidence values; the trailing "Cannot see" part c
   - Lambda, quota < 1: "More memory gives more CPU and will likely shorten Init. Try {next memory step} MB."
   - Cloud Run, quota < 1: "More CPU will likely shorten boot: cpu=1 or more, and startup CPU boost."
   - quota ≥ 1 or unknown: "Ruby boot runs mostly on one thread, so more than one vCPU probably helps little. If startup CPU boost is not on, turn it on. Otherwise the remaining fix is less CPU work at boot: see `hayaoki boot-report`."
-  - False positives: `cpu_ms` includes the first request and (without `cpu_at_load_ms`) the time before load; background threads can push share up; with an unknown quota a throttled CPU is not visible.
+  - False positives: `cpu_ms` includes the first request and (without `cpu_at_load_ms`) the time before load; background threads can push share up; with an unknown quota a throttled CPU is not visible; lines with `worker: true` (forked child) have no `cpu_at_load_ms` and the old share is wrong there (the child's CPU clock restarts), so rules skip `worker: true` lines without it.
 - **wait_dominated_boot**: "Boot likely spent most of its time waiting, not computing: on CPU {busy}% of the time (median of {n}). More CPU is unlikely to help. Likely causes: file IO (no bootsnap cache, many small files, lazily pulled image layers), network calls during boot (DB, secrets, HTTP in initializers), or CPU throttled before the first request." Cloud Run adds: "Try the other execution environment (gen1/gen2); file IO cost differs between them." With `sandbox: gvisor`: "gVisor system-call work is probably not counted as process CPU."
-  - False positives: an unknown quota below 1 vCPU looks like waiting (hence `busy`, and the quota-unknown text says so); a frozen-then-thawed process on gen2 without `cpu_at_load_ms` (the rule skips rejected starts in that case).
+  - False positives: an unknown quota below 1 vCPU looks like waiting (hence `busy`, and the quota-unknown text says so); a frozen-then-thawed process on gen2 without `cpu_at_load_ms` (the rule skips rejected starts in that case); lines with `worker: true` (forked child) have no `cpu_at_load_ms` and the old share is wrong there, so the rule skips them.
 - **bootsnap_off**: "bootsnap was not loaded in {k} of {n} cold starts. With bootsnap and a cache built into the image, boot likely skips load-path scans and recompiles. Measure the gain with `hayaoki boot-report`." No savings estimate: the lab number does not carry over to the platform.
 - **bootsnap_cache_cold**: "bootsnap is on, but its cache directory did not exist at boot in {k} of {n} cold starts, so each cold start likely rebuilds it. Precompile it in the image (`bootsnap precompile`) and check that the cache dir at runtime is the one built into the image." On Lambda add: "the image filesystem is read-only; a cache written at runtime goes to /tmp and is lost with the environment."
   - False positive: `bootsnap_cache` is null when bootsnap loaded before hayaoki; those lines are ignored.
@@ -160,7 +160,8 @@ The rules fire on Redmine (no bootsnap, near the Lambda limit) and on nothing in
 | Min instances, max instances, concurrency | No. Proactive starts are guessed from `idle` (0.2) | Hints are about boot length, not about how often users hit it; text says "these hints do not cover how often users hit a cold start (min instances)" once per report |
 | Execution environment gen1/gen2 | gen1 via `limits.sandbox` (heuristic); gen2 only by elimination | Suggest comparing both; never state which one is in use unless `sandbox` is set |
 | Lambda provisioned concurrency | Yes, `platform.init_type` | Lines with `provisioned-concurrency` are excluded from the Lambda limit rule (Init is not user-facing there) |
-| `AWS_LWA_ASYNC_INIT`, LWA readiness settings | Not logged (env values are never logged) | "If not set, consider ..." (Q3) |
+| `AWS_LWA_ASYNC_INIT` | Yes, `platform.lwa_async_init` (boolean, true only when the value is "true"; the value is never logged) | "If false, consider ..." (Q3) |
+| LWA readiness settings | No (env values are never logged) | Mentioned as possible causes only |
 | Image size, layer caching, region, cold image pull | No | Mentioned only as possible causes in the wait and timeout texts |
 
 Each hint's JSON carries `cannot_see: [...]` with the relevant settings, and the text prints them as one "Cannot see:" line.

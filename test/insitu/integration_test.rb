@@ -46,7 +46,7 @@ class InsituIntegrationTest < Minitest::Test
     l = JSON.parse(raw)
 
     assert_equal %w[hayaoki v severity message status id pid worker start_at start_source ready_source platform
-                    runtime marks_ms phases_ms eager_top first_request proc], l.keys
+                    runtime marks_ms phases_ms phases_cpu_ms eager_top first_request proc limits], l.keys
     assert_equal ["cold_start", 1, "INFO", "ok"], l.values_at("hayaoki", "v", "severity", "status")
     assert_match(/\A\h{8}\z/, l["id"])
     assert_equal false, l["worker"]
@@ -64,6 +64,12 @@ class InsituIntegrationTest < Minitest::Test
     order = %w[loaded bundler_require_start bundler_require_end initialize_start initialize_end first_probe first_request_start first_response_end]
     order.each { assert_kind_of Integer, m[_1], _1 }
     order.each_cons(2) { |a, b| assert_operator m[a], :<=, m[b], "#{a} <= #{b}" }
+
+    pc = l["phases_cpu_ms"]
+    %w[bundler_require initialize load_to_ready load_to_first_response].each { assert_kind_of Numeric, pc[_1], _1 }
+    assert_kind_of Integer, l["proc"]["cpu_at_load_ms"]
+    assert_equal %w[cgroup cpu_quota nproc mem_max_mb sandbox], l["limits"].keys
+    assert_operator l["limits"]["nproc"], :>=, 1
 
     ph = l["phases_ms"]
     assert_operator ph["bundler_require"], :>=, 150 # slowgem sleeps 0.18 s
