@@ -6,7 +6,7 @@ USER root
 WORKDIR /usr/src/redmine
 ENV RAILS_ENV=production WEB_CONCURRENCY=0 RAILS_MAX_THREADS=8 DB_PATH=db/production.sqlite3
 RUN printf 'production:\n  adapter: sqlite3\n  database: <%%= ENV.fetch("DB_PATH", "db/production.sqlite3") %%>\n' > config/database.yml && \
-    { printf 'gem "hayaoki", "0.2.0", require: false\n'; grep -q '"puma"' Gemfile || printf 'gem "puma"\n'; } > Gemfile.local && \
+    { printf 'gem "hayaoki", "0.3.1", require: false\n'; grep -q '"puma"' Gemfile || printf 'gem "puma"\n'; } > Gemfile.local && \
     bundle install && \
     SECRET_KEY_BASE=build-only bundle exec rake db:migrate && \
     sed -i "/bundler\/setup/a require 'hayaoki/insitu'" config/boot.rb && grep -q hayaoki/insitu config/boot.rb
