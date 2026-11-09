@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.1] - 2026-11-10
+
+### Added
+
+- In-situ lines gain `limits` (cgroup version, CPU quota, CPU count, memory limit, gVisor sandbox), `proc.cpu_at_load_ms` and `phases_cpu_ms` (process CPU time per phase), and on Lambda `platform.lwa_async_init` (true only when `AWS_LWA_ASYNC_INIT` is "true"; the value is not logged). The additions are optional; the line version stays 1. `cold-start-report` does not use them yet.
+
 ## [0.3.0] - 2026-11-09
 
 ### Added
