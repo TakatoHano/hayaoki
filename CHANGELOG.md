@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0] - 2026-11-09
+
+### Added
+
+- `cold-start-report` prints hints: likely causes outside app code, with the numbers behind them. Five rules: `bootsnap_off`, `bootsnap_cache_cold`, `gc_pressure`, `lambda_init_near_limit`, `prestarted_process`. Each needs at least 3 ok cold starts with a plausible start.
+- `--no-hints` leaves the hints out.
+- JSON output gains `hints`, `hints_n`, `hints_mixed` and `platform_init_reports`. The additions are optional; the report version stays 1.
+- The reader counts Lambda `INIT_REPORT` status lines (for example `timeout`), used by `lambda_init_near_limit`.
+
+### Fixed
+
+- Platform lines in JSONL input were counted twice.
+
+
 ## [0.2.1] - 2026-11-09
 
 ### Added

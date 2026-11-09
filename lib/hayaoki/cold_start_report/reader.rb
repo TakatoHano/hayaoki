@@ -10,12 +10,16 @@ module Hayaoki
       MARKER = /"hayaoki"\s*:\s*"cold_start"/
       CSV_HEADER = /\A"?@timestamp"?,"?@message/
       INIT_DURATION = /Init Duration: ([0-9.]+) ms/
+      # Lambda platform line for an Init that ended badly or was retried; counted by phase and status.
+      INIT_REPORT = /INIT_REPORT\b.*?Phase: ([a-z_]+).*?Status: ([a-z_]+)/i
+      PLATFORM = Regexp.union(INIT_DURATION, /INIT_REPORT/)
 
-      attr_reader :records, :platform_init_ms, :skipped_other, :skipped_invalid, :skipped_duplicate
+      attr_reader :records, :platform_init_ms, :init_reports, :skipped_other, :skipped_invalid, :skipped_duplicate
 
       def initialize
         @records = []
         @platform_init_ms = []
+        @init_reports = Hash.new(0) # [phase, status] => count
         @skipped_other = 0
         @skipped_invalid = 0
         @skipped_duplicate = 0
@@ -32,6 +36,11 @@ module Hayaoki
           text.each_line { |l| read_line(l) }
         end
         self
+      end
+      # [{"phase", "status", "count"}] sorted, or nil when no INIT_REPORT line was seen
+      def init_report_counts
+        return nil if @init_reports.empty?
+        @init_reports.sort.map { |(phase, status), c| { "phase" => phase, "status" => status, "count" => c } }
       end
 
       private
@@ -51,7 +60,7 @@ module Hayaoki
         end
       end
 
-      def init_only?(item) = item.is_a?(String) && item.match?(INIT_DURATION)
+      def init_only?(item) = item.is_a?(String) && item.match?(PLATFORM)
 
       def read_line(line)
         line = line.strip
@@ -59,8 +68,8 @@ module Hayaoki
         return if line.match?(CSV_HEADER)
         if line.start_with?('"') && line.include?('""')
           fields = csv_fields(line)
-          if fields.any? { |f| f.match?(MARKER) || f.match?(INIT_DURATION) }
-            fields.each { |f| read_line(f) if f.include?("{") || f.match?(INIT_DURATION) }
+          if fields.any? { |f| f.match?(MARKER) || f.match?(PLATFORM) }
+            fields.each { |f| read_line(f) if f.include?("{") || f.match?(PLATFORM) }
             return
           end
         end
@@ -77,13 +86,13 @@ module Hayaoki
             found = true
             walk(obj)
           end
-          scan_init(line)
-          @skipped_invalid += 1 if !found && !line.match?(INIT_DURATION) && !line.include?("{")
-          @skipped_other += 1 if !found && line.include?("{") && !line.match?(INIT_DURATION)
+          scan_init(line) unless found
+          @skipped_invalid += 1 if !found && !line.match?(PLATFORM) && !line.include?("{")
+          @skipped_other += 1 if !found && line.include?("{") && !line.match?(PLATFORM)
           return
         end
-        @skipped_other += 1 if @records.size == before && !line.match?(INIT_DURATION)
-        scan_init(line) if @records.size == before
+        # walk already scanned the strings inside obj for platform lines
+        @skipped_other += 1 if @records.size == before && !line.match?(PLATFORM)
       end
 
       # Prefix-stripped text may carry a suffix too; try the largest balanced candidate first.
@@ -167,7 +176,9 @@ module Hayaoki
 
       def scan_init(str)
         str.scan(INIT_DURATION) { |(v)| @platform_init_ms << v.to_f }
+        str.scan(INIT_REPORT) { |phase, status| @init_reports[[phase.downcase, status.downcase]] += 1 }
       end
+
     end
   end
 end

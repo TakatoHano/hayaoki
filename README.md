@@ -68,6 +68,39 @@ The "(from load)" rows count time from hayaoki's load instead of process start, 
 | `--since TIME`, `--until TIME` | filter by `start_at` (ISO 8601) |
 | `--format FORMAT` | `text` or `json` (default `text`) |
 | `--exclude-proactive` | drop lines with `idle` > 1000 ms (Lambda proactive init) |
+| `--no-hints` | leave out the hints |
+
+#### Hints
+
+Below the numbers, the report can print hints: likely causes outside app code, each with the numbers behind it. A hint is a lead to check, not a verdict.
+
+Hints need at least 3 ok cold starts with a plausible start. With fewer, the report says so and prints none. Levels:
+
+- `likely`: the data points to one cause.
+- `possible`: worth checking; the data fits but does not prove it.
+- `note`: context for reading the numbers.
+
+| Rule | Fires when | Level |
+| --- | --- | --- |
+| `bootsnap_off` | bootsnap was not loaded in at least half of the cold starts | likely |
+| `bootsnap_cache_cold` | bootsnap is on, but its cache dir did not exist at boot in at least half | likely |
+| `gc_pressure` | median GC time is 20% or more of boot CPU time | possible |
+| `lambda_init_near_limit` | Lambda only: any Init timeout, or p90 of Init or `to_ready` is 7 s or more (limit 10 s) | likely |
+| `prestarted_process` | at least half of the lines have a rejected or implausible process start | note |
+
+Example:
+
+```
+Hints (likely causes outside app code; based on 12 ok cold starts with a plausible start)
+  likely    bootsnap_off            bootsnap was not loaded in 12 of 12 cold starts. ...
+  possible  gc_pressure             GC took 24% of boot CPU (median 410 ms of 1700 ms, 18 GCs). ...
+```
+
+Use `--no-hints` to leave them out. In JSON they are under `hints`, `hints_n` and `hints_mixed`.
+
+If lines come from different configurations (for example two revisions or Ruby versions), the hints are flagged, because the mix can hide or invent a cause. Use `--group-by` to split them.
+
+Lambda `Init Duration` and `INIT_REPORT` lines have no id, so pass each Lambda log export once. If exports overlap, the Init lines are counted twice.
 
 ## In-situ cold-start logging
 
