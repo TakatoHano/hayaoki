@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## [0.2.1] - 2026-11-09
+
+### Added
 
 - `cold-start-report`: adds "ready (from load)" and "first response (from load)" rows (`ready_from_load_ms`, `first_response_from_load_ms`), timed from hayaoki's load, so lines with a rejected process start still give numbers.
 
