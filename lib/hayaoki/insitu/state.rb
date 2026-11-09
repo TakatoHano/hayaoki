@@ -28,6 +28,21 @@ module Hayaoki
         nil
       end
 
+      # Process CPU ms, nil when the clock is unavailable
+      def cpu_ms
+        Clock.cpu_ms
+      rescue StandardError
+        nil
+      end
+
+      # Load-time part of the "limits" object (cgroup, cpu_quota, nproc, sandbox); {} on failure
+      def read_limits
+        require_relative "limits"
+        Limits.load_fields
+      rescue StandardError, LoadError
+        {}
+      end
+
       def gc_time_ms
         GC.stat(:time)
       rescue StandardError
@@ -42,13 +57,13 @@ module Hayaoki
       MARKS = %i[loaded bundler_require_start bundler_require_end initialize_start initialize_end
                  first_probe first_request_start first_response_end forked].freeze
 
-      attr_reader :id, :load_pid, :load_ms, :start_ms, :entry, :marks, :eager_by, :out, :emit_mode, :probe_hits, :fork_gen
+      attr_reader :id, :load_pid, :load_ms, :start_ms, :entry, :marks, :cpu_marks, :limits, :eager_by, :out, :emit_mode, :probe_hits, :fork_gen
       attr_accessor :boot_error, :i18n_loaded, :first_request, :bootsnap_cache, :eager_ms, :server
 
       # `start_ms`: process start (P1) on the Clock scale, read once here so a forked worker
       # keeps the start of the process that booted the app (preload_app!). :auto reads /proc.
       def initialize(env: ENV, entry: "boot_rb", load_ms: Clock.now_ms, pid: Process.pid, id: nil, bootsnap_cache: nil,
-                     start_ms: :auto)
+                     start_ms: :auto, load_cpu_ms: Insitu.cpu_ms, limits: :auto)
         @id = id || Random.urandom(4).unpack1("H*")
         @load_pid = pid
         @load_ms = load_ms
@@ -57,6 +72,9 @@ module Hayaoki
         @server = nil
         @entry = entry
         @marks = {loaded: load_ms}
+        # Process CPU ms next to each mark (same keys); nil-safe, one Clock.cpu_ms call per mark
+        @cpu_marks = {loaded: load_cpu_ms}
+        @limits = limits == :auto ? Insitu.read_limits : limits
         @eager_by = Hash.new(0.0)
         @eager_ms = 0.0
         @eager_depth = 0
@@ -81,11 +99,15 @@ module Hayaoki
       end
 
       # Keeps the first value: a second Bundler.require or a retried initialize! does not move it.
-      def mark(name, t = Clock.now_ms) = (@marks[name] ||= t)
+      def mark(name, t = Clock.now_ms)
+        @cpu_marks[name] ||= Insitu.cpu_ms unless @marks.key?(name)
+        @marks[name] ||= t
+      end
 
       # A request to an ignored (health) path. Counted only until the first real request starts.
       def probe_hit!(t = Clock.now_ms)
         @lock.synchronize do
+          @cpu_marks[:first_probe] ||= Insitu.cpu_ms unless @marks.key?(:first_probe)
           @marks[:first_probe] ||= t
           @probe_hits += 1 unless @first_pid == Process.pid
         end
@@ -121,7 +143,8 @@ module Hayaoki
       def forked_in_child!(t = Clock.now_ms)
         @fork_gen = fork_gen + 1 # middleware compares this instead of calling getpid per request
         @marks[:forked] = t
-        %i[first_probe first_request_start first_response_end].each { |k| @marks.delete(k) }
+        @cpu_marks[:forked] = Insitu.cpu_ms
+        %i[first_probe first_request_start first_response_end].each { |k| @marks.delete(k); @cpu_marks.delete(k) }
         @first_request = nil
         @probe_hits = 0
       end
