@@ -234,15 +234,16 @@ Deferred: hints that compare two groups (for example "2048 MB was 1.2 s faster t
 
 ---
 
-## 9. Open questions
+## 9. Decisions (2026-11-09)
 
-- Q1: Are 0.70 / 0.50 for `busy` and 3 s for `G_ready` acceptable? CR gen1 minimal (0.74) gets a `possible` CPU hint; raising the bound to 0.75 would silence it.
-- Q2: Lambda quota: use the nominal `memory_mb / 1769` when cgroup gives nothing, even though 1024 MB measured 0.78 > 0.58? Alternative: no quota on Lambda, and judge "more memory" only from the share plus memory below 1769 MB. A 512 MB Redmine cell would settle it.
-- Q3: May the line record a boolean for the presence of a few known platform settings (`AWS_LWA_ASYNC_INIT`)? It is not an env value, but phase2.md §3.2 says no env data.
-- Q4: Should hints be computed per revision / memory size automatically when the set is mixed, or only flagged (`mixed: true`) as proposed?
-- Q5: Re-measurement cells for 0.3: is a CR cpu=2 cell and a boost-off cell worth the cost, so `cpu_bound_boot` wording on Cloud Run can be checked?
-- Q6: Hints on by default in text output (`--no-hints` to turn off), or opt-in with `--hints`?
-- Q7: Lambda limit threshold 7 s, or 6 s so that Redmine 2048 (max 6.4 s) also gets a warning?
+- Scope split: **0.3.0** ships only hints computable from fields 0.2 lines already carry, verifiable on local data without cloud work: `bootsnap_off`, `bootsnap_cache_cold`, `prestarted_process`, `lambda_init_near_limit`, `gc_pressure` (steps 3, 4, 5, 7 and the `gc_pressure` part of 6, then 10). **0.4.0** adds `limits`, `cpu_at_load_ms` / `phases_cpu_ms`, `cpu_bound_boot`, `wait_dominated_boot`, `memory_near_limit` together with the cloud re-measurement (steps 1, 2, rest of 6, 8, 9).
+- Q1: keep 0.70 / 0.50 and 3 s; revisit with 0.4 data.
+- Q2: Lambda uses the nominal `memory_mb / 1769` quota when cgroup gives nothing; wording says "estimate".
+- Q3: yes, record a boolean for `AWS_LWA_ASYNC_INIT` presence (not its value).
+- Q4: flag only (`mixed: true`); users split with `--group-by`.
+- Q5: decide after the 0.4 implementation.
+- Q6: hints on by default in text output; `--no-hints` turns them off.
+- Q7: 7 s.
 
 ---
 
