@@ -152,4 +152,18 @@ class ColdStartReportTest < Minitest::Test
     refute_includes Hayaoki::ColdStartReport::Formatters::Text.new.format(build("bare.jsonl")), "warning:"
     assert_equal Hayaoki::Insitu::Emitter::MAX_PRE_LOAD_MS, Hayaoki::ColdStartReport::Stats::MAX_PRE_LOAD_MS
   end
+
+  def test_from_load_includes_implausible_start_lines
+    good = JSON.parse(fx("bare.jsonl").lines[0])
+    bad = JSON.parse(JSON.generate(good)).merge("id" => "badstart")
+    bad["phases_ms"].merge!("pre_load" => 3_500_000, "to_ready" => 3_502_000, "to_first_response" => 3_502_100)
+    r = Hayaoki::ColdStartReport.build([[good, bad].map { JSON.generate(_1) }.join("\n")])
+    s = r["summary"]
+    assert_equal 1, s["ready_ms"]["n"]
+    assert_equal 2, s["ready_from_load_ms"]["n"]
+    assert_equal 2, s["first_response_from_load_ms"]["n"]
+    assert_equal [2000, good["phases_ms"]["to_ready"] - good["phases_ms"]["pre_load"]].max, s["ready_from_load_ms"]["max"]
+    assert_equal [2100, good["phases_ms"]["to_first_response"] - good["phases_ms"]["pre_load"]].max, s["first_response_from_load_ms"]["max"]
+    assert_includes Hayaoki::ColdStartReport::Formatters::Text.new.format(r), "(from load)"
+  end
 end

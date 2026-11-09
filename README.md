@@ -60,6 +60,8 @@ Summarizes the `cold_start` log lines written by the in-situ recorder. It reads 
 
 The output has the line count, p50/p90/p99/max for ready, first response and each phase, the mean `eager_top`, the first-request routes and lazy-loaded feature groups, and the split between user-facing and proactive starts.
 
+The "(from load)" rows count time from hayaoki's load instead of process start, so they still have numbers when the process start is rejected. On Cloud Run gen2 the process start is not the cold-start origin: instances appear to be created ahead and frozen until a request, so `pre_load` and the ready times come out as tens of minutes and are dropped. Use the "(from load)" rows together with Cloud Run's `container/startup_latencies` metric or client-side timing for the full picture.
+
 | Option | Description |
 | --- | --- |
 | `--group-by KEY` | group by a dotted path or alias: `revision`, `platform.kind`, `runtime.ruby`, `init_type` |
