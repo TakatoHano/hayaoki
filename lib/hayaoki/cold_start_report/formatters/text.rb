@@ -33,11 +33,12 @@ module Hayaoki
           return if s["n_ok"].zero?
           if s["implausible_start"].to_i > 0
             out << "warning: #{s["implausible_start"]} line(s) with pre_load outside 0..#{Stats::MAX_PRE_LOAD_MS}ms (bad /proc process start); " \
-                   "their pre_load, to_ready and to_first_response are left out below"
+                   "their pre_load, to_ready and to_first_response are left out below; the \"(from load)\" rows include them"
           end
           out << ""
           out << "Time to ready / first response (ms)"
-          table(out, [["ready", s["ready_ms"]], ["first response", s["first_response_ms"]]])
+          table(out, [["ready", s["ready_ms"]], ["first response", s["first_response_ms"]],
+                      ["ready (from load)", s["ready_from_load_ms"]], ["first response (from load)", s["first_response_from_load_ms"]]])
           out << ""
           out << "Phases (ms)"
           table(out, s["phases_ms"].to_a)
@@ -63,10 +64,10 @@ module Hayaoki
         end
 
         def table(out, rows)
-          out << Kernel.format("  %-18s %7s %9s %9s %9s %9s", "", "n", "p50", "p90", "p99", "max")
+          out << Kernel.format("  %-27s %7s %9s %9s %9s %9s", "", "n", "p50", "p90", "p99", "max")
           rows.each do |name, d|
-            next out << Kernel.format("  %-18s %7s", name, "-") unless d
-            out << Kernel.format("  %-18s %7d %9s %9s %9s %9s", name, d["n"], d["p50"], d["p90"], d["p99"], d["max"])
+            next out << Kernel.format("  %-27s %7s", name, "-") unless d
+            out << Kernel.format("  %-27s %7d %9s %9s %9s %9s", name, d["n"], d["p50"], d["p90"], d["p99"], d["max"])
           end
         end
       end

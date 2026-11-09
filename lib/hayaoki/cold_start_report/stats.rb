@@ -79,6 +79,15 @@ module Hayaoki
         phase = ->(r, k) { START_BASED.include?(k) && bad[r] ? nil : r.dig("phases_ms", k) }
         s["ready_ms"] = dist(ok.filter_map { |r| phase.(r, "to_ready") })
         s["first_response_ms"] = dist(ok.filter_map { |r| phase.(r, "to_first_response") })
+        from_load = lambda do |k|
+          ok.filter_map do |r|
+            a = r.dig("phases_ms", k)
+            b = r.dig("phases_ms", "pre_load")
+            a - b if a.is_a?(Numeric) && b.is_a?(Numeric)
+          end
+        end
+        s["ready_from_load_ms"] = dist(from_load.("to_ready"))
+        s["first_response_from_load_ms"] = dist(from_load.("to_first_response"))
         keys = (PHASE_ORDER + ok.flat_map { |r| (r["phases_ms"] || {}).keys }).uniq
         s["phases_ms"] = keys.to_h { |k| [k, dist(ok.filter_map { |r| phase.(r, k) })] }.compact
         s["eager_top"] = eager(ok)

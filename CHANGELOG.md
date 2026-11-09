@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `cold-start-report`: adds "ready (from load)" and "first response (from load)" rows (`ready_from_load_ms`, `first_response_from_load_ms`), timed from hayaoki's load, so lines with a rejected process start still give numbers.
+
 ### Fixed
 
 - In-situ: a process start read from `/proc/self/stat` more than 600 s before hayaoki loaded (or after it) is no longer used. Seen once in seven Cloud Run gen1 cold starts as a `pre_load` of about 2 hours. The line then falls back to the load origin (`start_source: "load"`, `start_at` null) and adds `start_rejected: {"reason", "pre_load_ms"}`. The schema version stays 1.
