@@ -24,8 +24,10 @@ FROM base AS lambda
 ENV PORT=3000 AWS_LWA_PORT=3000 AWS_LWA_READINESS_CHECK_PATH=/up RAILS_MAX_THREADS=3 DB_PATH=/tmp/rm/redmine.sqlite3
 COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0 /lambda-adapter /opt/extensions/lambda-adapter
 # Lambda's file system is read-only except /tmp: point the writable Redmine dirs at /tmp and copy the DB there at start.
-RUN mv db/production.sqlite3 /opt/production.sqlite3 && rm -rf tmp log files public/plugin_assets && \
-    ln -s /tmp/rm/tmp tmp && ln -s /tmp/rm/log log && ln -s /tmp/rm/files files && ln -s /tmp/rm/plugin_assets public/plugin_assets
+# files/ is a VOLUME in the base image and cannot be removed during build; attachments_storage_path moves it instead.
+RUN mv db/production.sqlite3 /opt/production.sqlite3 && rm -rf tmp log public/plugin_assets && \
+    ln -s /tmp/rm/tmp tmp && ln -s /tmp/rm/log log && ln -s /tmp/rm/plugin_assets public/plugin_assets && \
+    printf 'production:\n  attachments_storage_path: /tmp/rm/files\n' > config/configuration.yml
 USER redmine
 EXPOSE 3000
 ENTRYPOINT []
