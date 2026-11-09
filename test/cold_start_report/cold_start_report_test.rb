@@ -166,4 +166,102 @@ class ColdStartReportTest < Minitest::Test
     assert_equal [2100, good["phases_ms"]["to_first_response"] - good["phases_ms"]["pre_load"]].max, s["first_response_from_load_ms"]["max"]
     assert_includes Hayaoki::ColdStartReport::Formatters::Text.new.format(r), "(from load)"
   end
+
+  # --- INIT_REPORT (Lambda platform lines)
+
+  INIT_TIMEOUT = "INIT_REPORT Init Duration: 9999.61 ms\tPhase: init\tStatus: timeout"
+  INIT_ERROR = "INIT_REPORT Init Duration: 1200.00 ms\tPhase: invoke\tStatus: error"
+
+  def init_reports(text) = Hayaoki::ColdStartReport.build([text])["summary"]["platform_init_reports"]
+
+  def test_init_report_plain_text
+    text = "2026-11-08T03:12:40.000Z\t#{INIT_TIMEOUT}\n#{INIT_ERROR}\n1794000000000\t#{INIT_TIMEOUT}\n" + fx("cloudwatch.log")
+    r = Hayaoki::ColdStartReport.build([text])
+    assert_equal [{ "phase" => "init", "status" => "timeout", "count" => 2 }, { "phase" => "invoke", "status" => "error", "count" => 1 }],
+                 r["summary"]["platform_init_reports"]
+    assert_equal 4, r["summary"]["platform_init_ms"]["n"]
+    assert_equal 2, r["input"]["skipped_invalid"]
+    assert_includes Hayaoki::ColdStartReport::Formatters::Text.new.format(r), "INIT_REPORT lines: init/timeout x2, invoke/error x1"
+    assert_nil init_reports(fx("cloudwatch.log"))
+  end
+
+  def test_init_report_cloudwatch_export_and_json_array
+    events = { "events" => [{ "timestamp" => 1, "message" => "#{INIT_TIMEOUT}\n" }, { "timestamp" => 2, "message" => "#{INIT_ERROR}\n" }] }
+    want = [{ "phase" => "init", "status" => "timeout", "count" => 1 }, { "phase" => "invoke", "status" => "error", "count" => 1 }]
+    assert_equal want, init_reports(JSON.generate(events))
+    assert_equal want, init_reports(JSON.generate(events["events"]))
+    # JSONL of events: each platform line counted once
+    r = Hayaoki::ColdStartReport.build([events["events"].map { JSON.generate(_1) }.join("\n")])
+    assert_equal want, r["summary"]["platform_init_reports"]
+    assert_equal 2, r["summary"]["platform_init_ms"]["n"]
+    csv = %Q("@timestamp","@message"\n"2026-11-08 03:12:40.000","#{INIT_TIMEOUT}"\n)
+    assert_equal [want[0]], init_reports(csv)
+  end
+
+  # --- hints output
+
+  def hint_line(i, ready: 6800, bootsnap: false, pre_load: 400)
+    { "hayaoki" => "cold_start", "v" => 1, "status" => "ok", "id" => "h#{i}", "pid" => 1,
+      "platform" => { "kind" => "lambda", "function" => "fn", "memory_mb" => 1024, "init_type" => "on-demand" },
+      "runtime" => { "bootsnap" => bootsnap, "bootsnap_cache" => nil },
+      "phases_ms" => { "pre_load" => pre_load, "to_ready" => ready, "to_first_response" => ready + 200 },
+      "proc" => { "cpu_ms" => 5000, "gc_time_ms" => 1500, "gc_count" => 30 } }
+  end
+
+  def hint_input(n, **kw) = Array.new(n) { |i| JSON.generate(hint_line(i, **kw)) }.join("\n") + "\n"
+
+  def test_hints_text_three_none_and_too_few
+    r = Hayaoki::ColdStartReport.build([hint_input(5, ready: 8000) + INIT_TIMEOUT + "\n"])
+    out = Hayaoki::ColdStartReport::Formatters::Text.new.format(r)
+    assert_includes out, "Hints (likely causes outside app code; based on 5 ok cold starts with a plausible start)"
+    rows = out.lines.grep(/^  (likely|possible|note) /).map { _1.split[0..1] }
+    assert_equal [%w[likely bootsnap_off], %w[likely lambda_init_near_limit], %w[possible gc_pressure]], rows
+    assert_includes out, "Cannot see: AWS_LWA_ASYNC_INIT, image pull and layer caching, RUBY_GC_* settings"
+    assert_includes out, "These hints do not cover how often users hit a cold start (min instances)."
+
+    out = Hayaoki::ColdStartReport::Formatters::Text.new.format(Hayaoki::ColdStartReport.build([hint_input(6, ready: 1800, bootsnap: true)]))
+    assert_includes out, "Hints: none (n=6)"
+    refute_includes out, "min instances"
+
+    out = Hayaoki::ColdStartReport::Formatters::Text.new.format(Hayaoki::ColdStartReport.build([hint_input(2)]))
+    assert_includes out, "Hints: hints need at least 3 ok cold starts with a plausible start (have 2)"
+  end
+
+  def test_hints_json
+    j = JSON.parse(Hayaoki::ColdStartReport::Formatters::Json.new.format(Hayaoki::ColdStartReport.build([hint_input(5, ready: 8000)])))
+    h = j["summary"]["hints"]
+    assert_equal %w[bootsnap_off lambda_init_near_limit gc_pressure], h.map { _1["id"] }
+    assert_equal %w[cannot_see evidence id level message mixed n], h[0].keys.sort
+    assert_equal [5, false], [h[0]["n"], h[0]["mixed"]]
+    assert_equal 5, j["summary"]["hints_n"]
+    j = JSON.parse(Hayaoki::ColdStartReport::Formatters::Json.new.format(Hayaoki::ColdStartReport.build([hint_input(6, ready: 1800, bootsnap: true)])))
+    assert_equal [], j["summary"]["hints"]
+    j = JSON.parse(Hayaoki::ColdStartReport::Formatters::Json.new.format(Hayaoki::ColdStartReport.build([hint_input(2)])))
+    assert_equal [[], 2], [j["summary"]["hints"], j["summary"]["hints_n"]]
+  end
+
+  def test_hints_per_group_and_no_hints_flag
+    other = hint_input(3, bootsnap: true).gsub('"memory_mb":1024', '"memory_mb":2048').gsub('"id":"h', '"id":"g')
+    code, out, = run_cli(%w[cold-start-report --group-by memory_mb], stdin: hint_input(3) + other)
+    assert_equal 0, code
+    assert_equal 2, out.scan(/^Hints/).size
+    assert_match(/== memory_mb: 1024 ==.*bootsnap_off.*== memory_mb: 2048 ==/m, out)
+    refute_includes out.split("== memory_mb: 2048 ==").last, "bootsnap_off"
+    _, out, = run_cli(%w[cold-start-report], stdin: hint_input(3) + other)
+    assert_includes out, "Lines come from different configurations (memory_mb, bootsnap); try --group-by memory_mb."
+    _, out, = run_cli(%w[cold-start-report --no-hints], stdin: hint_input(3))
+    refute_includes out, "Hints"
+    _, out, = run_cli(%w[cold-start-report --no-hints --format json], stdin: hint_input(3))
+    refute JSON.parse(out)["summary"].key?("hints")
+    assert_includes run_cli(%w[cold-start-report --help])[1], "--no-hints"
+  end
+
+  # Fixtures hold placeholder values only: no long hex IDs, account numbers, ARNs or emails.
+  def test_fixtures_have_no_real_ids
+    bad = /\b[0-9a-f]{16,}\b|\b\d{12}\b|arn:aws:|[\w.+-]+@[\w-]+\.(?:com|net|org|io|jp|dev)\b/
+    hits = Dir[File.join(FIXTURES, "**", "*")].select { File.file?(_1) }.flat_map do |f|
+      File.read(f, mode: "rb").force_encoding("UTF-8").scrub.lines.each_with_index.filter_map { |l, i| "#{f}:#{i + 1}" if l.match?(bad) }
+    end
+    assert_empty hits
+  end
 end

@@ -75,7 +75,7 @@ module Hayaoki
     def top_help = "#{USAGE}\n       #{CSR_USAGE.sub("Usage: ", "")}\n       hayaoki --version\n\nRun `hayaoki <command> --help` for options."
 
     def cold_start_report(argv)
-      opts = { format: "text", group_by: nil, since: nil, until_: nil, exclude_proactive: false }
+      opts = { format: "text", group_by: nil, since: nil, until_: nil, exclude_proactive: false, hints: true }
       parser = OptionParser.new do |o|
         o.banner = "#{CSR_USAGE}\n\nReads hayaoki cold_start log lines from FILEs (default stdin)."
         o.on("--group-by KEY", "revision|platform.kind|runtime.ruby|init_type|... (dotted path)") { |v| opts[:group_by] = v }
@@ -83,6 +83,7 @@ module Hayaoki
         o.on("--until TIME", "only starts at or before TIME (ISO 8601, by start_at; lines without start_at are dropped and counted)") { |v| opts[:until_] = parse_time(v) }
         o.on("--format FORMAT", %w[text json], "text|json (default text)") { |v| opts[:format] = v }
         o.on("--exclude-proactive", "drop lines with idle_ms > 1000 (Lambda proactive init)") { opts[:exclude_proactive] = true }
+        o.on("--no-hints", "leave out the hints (likely causes outside app code)") { opts[:hints] = false }
         o.on("-h", "--help", "show this help") { opts[:action] = :help }
       end
       files = parser.parse(argv)
@@ -94,7 +95,7 @@ module Hayaoki
       require_relative "cold_start_report/runner"
       texts = files.empty? ? [(@stdin || $stdin).read] : files.map { |f| File.read(f) }
       result = ColdStartReport.build(texts, group_by: opts[:group_by], since: opts[:since], until_: opts[:until_],
-                                            exclude_proactive: opts[:exclude_proactive])
+                                            exclude_proactive: opts[:exclude_proactive], hints: opts[:hints])
       if opts[:format] == "json"
         require_relative "cold_start_report/formatters/json"
         @out.write(ColdStartReport::Formatters::Json.new.format(result))

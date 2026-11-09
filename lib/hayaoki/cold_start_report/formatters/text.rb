@@ -1,9 +1,14 @@
 # frozen_string_literal: true
 
+require_relative "../hints"
+
 module Hayaoki
   module ColdStartReport
     module Formatters
       class Text
+        CANNOT_SEE = { "aws_lwa_async_init" => "AWS_LWA_ASYNC_INIT", "image_pull" => "image pull and layer caching",
+                       "cpu_allocation" => "Cloud Run CPU allocation", "ruby_gc_env" => "RUBY_GC_* settings" }.freeze
+
         def format(result)
           out = ["hayaoki cold-start-report"]
           inp = result["input"]
@@ -17,10 +22,18 @@ module Hayaoki
             result["groups"].each do |key, s|
               out << "== #{result["group_by"]}: #{key} =="
               summary(out, s)
+              hints(out, s)
               out << ""
             end
+            init_reports(out, result["platform_init_reports"])
           else
             summary(out, result["summary"])
+            hints(out, result["summary"])
+          end
+          sums = result["groups"] ? result["groups"].values : [result["summary"]]
+          if sums.any? { |s| s["hints"]&.any? }
+            out << "" unless out.last == ""
+            out << "These hints do not cover how often users hit a cold start (min instances)."
           end
           out.join("\n").rstrip + "\n"
         end
@@ -47,6 +60,7 @@ module Hayaoki
             out << "Platform Init Duration (ms, from REPORT lines)"
             table(out, [["init duration", s["platform_init_ms"]]])
           end
+          init_reports(out, s["platform_init_reports"])
           unless s["eager_top"].empty?
             out << ""
             out << "Eager load top (mean ms)"
@@ -61,6 +75,33 @@ module Hayaoki
             out << "  lazy-loaded features by group:"
             fr["new_by_group"].each { |h| out << Kernel.format("    %-28s %6d", h["group"], h["count"]) }
           end
+        end
+
+        def init_reports(out, list)
+          return unless list
+          out << ""
+          out << "Platform INIT_REPORT lines: #{list.map { |h| "#{h["phase"]}/#{h["status"]} x#{h["count"]}" }.join(", ")}"
+        end
+
+        def hints(out, s)
+          return unless s.key?("hints")
+          list = s["hints"]
+          n = s["hints_n"]
+          few = "hints need at least #{Hints::MIN_N} ok cold starts with a plausible start (have #{n})"
+          out << ""
+          if list.empty?
+            out << "Hints: #{n < Hints::MIN_N ? few : "none (n=#{n})"}"
+            return
+          end
+          out << "Hints (likely causes outside app code; based on #{n} ok cold starts with a plausible start)"
+          list.each { |h| out << Kernel.format("  %-9s %-23s %s", h["level"], h["id"], h["message"]) }
+          out << "            Most #{few}." if n < Hints::MIN_N
+          if (keys = s["hints_mixed"])
+            names = keys.map { _1.split(".").last }
+            out << "            Lines come from different configurations (#{names.join(", ")}); try --group-by #{names.first}."
+          end
+          seen = list.flat_map { |h| h["cannot_see"] }.uniq
+          out << "            Cannot see: #{seen.map { |k| CANNOT_SEE[k] || k }.join(", ")}" unless seen.empty?
         end
 
         def table(out, rows)
