@@ -11,17 +11,19 @@ usage: cloud_run.sh --project ID --expect-project ID --gcloud-config NAME --app 
   (--expect-project may be replaced by gcp_project= in results/.target)
   --samples N        cold starts to sample (default 6)
   --interval-min M   idle minutes before each request in natural mode (default 20)
+  --exec-env E       gen1|gen2 execution environment (default gen1); gen2 uses service APP-gen2 and implies --skip-build
   --force-cold       smoke-test mode: new revision per sample (see README caveats)
+  --skip-build       reuse the image already in Artifact Registry (e.g. gen2 next to gen1)
   --collect-only     skip deploy/sampling; just collect logs and report
-  --background       confirm now, then continue under nohup (log: results/cloud_run-APP/run.log)
+  --background       confirm now, then continue under nohup (log: results/cloud_run-APP[-gen2]/run.log)
   --yes              skip confirmations (the --background child uses it)
-Resumable: re-running continues from results/cloud_run-APP/samples.csv and skips build/deploy when
+Resumable: re-running continues from results/cloud_run-APP[-gen2]/samples.csv and skips build/deploy when
 the image and service already exist.
 USAGE
   exit 2
 }
 
-PROJECT="" EXPECT="" GCONF="" APP="" N=6 INTERVAL=20 FORCE=0 COLLECT_ONLY=0
+PROJECT="" EXPECT="" GCONF="" APP="" N=6 INTERVAL=20 EXEC_ENV=gen1 SKIP_BUILD=0 FORCE=0 COLLECT_ONLY=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --project) PROJECT="$2"; shift 2 ;;
@@ -30,7 +32,9 @@ while [[ $# -gt 0 ]]; do
     --app) APP="$2"; shift 2 ;;
     --samples) N="$2"; shift 2 ;;
     --interval-min) INTERVAL="$2"; shift 2 ;;
+    --exec-env) EXEC_ENV="$2"; shift 2 ;;
     --force-cold) FORCE=1; shift ;;
+    --skip-build) SKIP_BUILD=1; shift ;;
     --collect-only) COLLECT_ONLY=1; shift ;;
     --background) BACKGROUND=1; shift ;;
     --yes) ASSUME_YES=1; shift ;;
@@ -38,19 +42,23 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ "$APP" == minimal || "$APP" == redmine ]] || usage
+[[ "$EXEC_ENV" == gen1 || "$EXEC_ENV" == gen2 ]] || usage
+SUFFIX="$([[ $EXEC_ENV == gen2 ]] && echo -gen2 || true)"
+# gen2 always reuses the gen1 image: rebuilding :v1 would let ar_prune_untagged delete the digest gen1 serves.
+[[ $EXEC_ENV == gen2 ]] && SKIP_BUILD=1
 gcp_setup "$GCONF" "$PROJECT" "$EXPECT"
 
 REGION="$GCP_REGION_FIXED"
-SERVICE="$BENCH_PREFIX-$APP"
+SERVICE="$BENCH_PREFIX-$APP$SUFFIX"
 REPO="$BENCH_PREFIX"
 IMAGE="$REGION-docker.pkg.dev/$PROJECT/$REPO/$APP:v1"
-OUT="$CLOUD_DIR/results/cloud_run-$APP"
+OUT="$CLOUD_DIR/results/cloud_run-$APP$SUFFIX"
 mkdir -p "$OUT"
 CSV="$OUT/samples.csv"       # index,mode,sent_at,http_code,ttfb_s,total_s
 
 CPU=1 MEMORY=1Gi CONC=8 MAXI=1
 {
-  echo "platform=cloud_run service=$SERVICE region=$REGION app=$APP cpu=$CPU memory=$MEMORY"
+  echo "platform=cloud_run service=$SERVICE region=$REGION app=$APP cpu=$CPU memory=$MEMORY execution_environment=$EXEC_ENV"
   echo "startup_cpu_boost=on min_instances=0 max_instances=$MAXI concurrency=$CONC ingress=all auth=IAM(no allUsers)"
   echo "mode=$([[ $FORCE == 1 ]] && echo force-cold || echo "natural interval_min=$INTERVAL") samples=$N"
 } > "$OUT/config.txt"
@@ -110,7 +118,9 @@ service_exists() { "${GC[@]}" run services describe "$SERVICE" --region "$REGION
 if [[ -f "$OUT/start.txt" ]] && image_exists && service_exists; then
   log "resuming: image and service exist, skipping build and deploy"
 else
-  if ! image_exists || [[ ! -f "$OUT/start.txt" ]]; then
+  if [[ $SKIP_BUILD == 1 ]]; then
+    image_exists || die "--skip-build: image $IMAGE not found"
+  elif ! image_exists || [[ ! -f "$OUT/start.txt" ]]; then
     ctx="$OUT/context"
     prepare_context "$APP" cloud_run "$ctx"
     build_with_cloud_build "$IMAGE" "$ctx" "$([[ $APP == redmine ]] && echo cloud_run || true)"
@@ -121,7 +131,7 @@ else
   # outside GCP (--ingress internal only admits VPC/GCP traffic); IAM still rejects unauthenticated requests.
   "${GC[@]}" run deploy "$SERVICE" --image "$IMAGE" --region "$REGION" \
     --no-allow-unauthenticated --ingress all \
-    --cpu "$CPU" --memory "$MEMORY" --cpu-boost \
+    --cpu "$CPU" --memory "$MEMORY" --cpu-boost --execution-environment "$EXEC_ENV" \
     --min-instances 0 --max-instances "$MAXI" --concurrency "$CONC" --port 8080 --timeout 60 \
     --set-env-vars "SECRET_KEY_BASE=$(cat "$OUT/secret_key_base"),HAYAOKI_BENCH_SAMPLE=0"
   [[ -f "$OUT/start.txt" ]] || date -u +%Y-%m-%dT%H:%M:%SZ > "$OUT/start.txt"

@@ -95,7 +95,7 @@ Cloud Run: 1 vCPU, 1Gi, startup CPU boost on, min 0, max 1, concurrency 8, defau
   --project example-project --expect-project example-project --gcloud-config example-config
 ```
 
-Add `--app redmine` for Redmine. Options: `./cloud_run.sh` and `./lambda.sh` without arguments print usage.
+Add `--app redmine` for Redmine. Add `--exec-env gen2` to `cloud_run.sh` to measure the second-generation execution environment; it reuses the image already built for gen1 (implies `--skip-build`) (service `hayaoki-bench-APP-gen2`, results in `results/cloud_run-APP-gen2`). Options: `./cloud_run.sh` and `./lambda.sh` without arguments print usage.
 
 Use a dedicated GCP project and AWS account for this bench. `teardown.sh` deletes the `source/` prefix of the project's `*_cloudbuild` bucket, which would also remove other Cloud Build sources in a shared project.
 
