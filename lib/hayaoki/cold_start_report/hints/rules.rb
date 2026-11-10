@@ -56,18 +56,24 @@ module Hayaoki
         return nil if set.size < MIN_N || !c.g_ready?(set)
         shares = set.map { |r| c.share(r) }
         quota = c.quota(set)
+        busy = shares.map { |s| c.busy(s[:share], quota) }
         { set: set, n: set.size, quota: quota,
-          busy: median(shares.map { |s| c.busy(s[:share], quota) }),
+          busy: median(busy),
+          waited: busy.count { _1 <= WAIT_BUSY }, # lines that would read as wait-dominated on their own
           share: median(shares.map { _1[:share] }),
           cpu_ms: median(shares.map { _1[:cpu_ms] }), wall_ms: median(shares.map { _1[:wall_ms] }),
-          from_load: shares.count { _1[:from_load] } }
+          from_load: shares.count { _1[:from_load] },
+          runq_wait_ms: median(set.filter_map { |r| c.main_thread_runq_wait_ms(r) }) }
       end
 
+      # main_thread_runq_wait_ms_p50 is the main thread's run-queue wait from load to emit (issue #12);
+      # nil for lines without the field. Not comparable one to one with cpu_ms (all threads).
       def self.cpu_evidence(s)
         { "busy_p50" => s[:busy].round(2), "share_p50" => s[:share].round(2),
           "cpu_ms_p50" => Stats.rnd(s[:cpu_ms]), "wall_ms_p50" => Stats.rnd(s[:wall_ms]),
           "quota" => s[:quota]&.round(2), "quota_source" => s[:quota] ? "cgroup" : "unknown",
-          "from_load_lines" => s[:from_load] }
+          "from_load_lines" => s[:from_load], "waited_lines" => s[:waited],
+          "main_thread_runq_wait_ms_p50" => Stats.rnd(s[:runq_wait_ms]) }
       end
 
       def self.span(s) = s[:from_load] == s[:n] ? "from load to first response" : "to first response"
@@ -83,6 +89,8 @@ module Hayaoki
         pct = (s[:busy] * 100).round
         msg = "Boot was likely CPU-bound: the process was on CPU #{pct}% of the time #{span(s)} " \
               "(median of #{s[:n]}; CPU #{sec(s[:cpu_ms])} s of #{sec(s[:wall_ms])} s; quota #{quota ? "#{quota.round(2)} vCPU" : "unknown"})."
+        # The median hides lines that waited (gen1 minimal: 0.40 and 0.44 next to a 0.72 median); say so.
+        msg += " #{s[:waited]} of #{s[:n]} lines waited instead: on CPU #{(WAIT_BUSY * 100).round}% of the time or less." if s[:waited].positive?
         cannot_see = []
         if lambda
           msg += " Init reportedly gets CPU independent of the memory setting, so more memory is unlikely to shorten Init. " \

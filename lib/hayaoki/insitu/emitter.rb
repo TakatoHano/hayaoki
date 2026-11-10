@@ -161,10 +161,16 @@ module Hayaoki
         }
       end
 
+      # The *_at_load_ms values are nil in a forked child: its CPU clock and its schedstat counters
+      # restart at fork, so the load-time reading belongs to another process.
       def proc_facts(state, features, tck)
+        child = state.marks.key?(:forked)
         {
-          "cpu_ms" => ms(Clock.cpu_ms), "cpu_at_load_ms" => state.marks.key?(:forked) ? nil : ms(state.cpu_marks[:loaded]), "rss_kb" => ProcFS.rss_kb, "uptime_ms" => ProcFS.uptime_ms,
+          "cpu_ms" => ms(Clock.cpu_ms), "cpu_at_load_ms" => child ? nil : ms(state.cpu_marks[:loaded]), "rss_kb" => ProcFS.rss_kb, "uptime_ms" => ProcFS.uptime_ms,
           "pid1_age_ms" => ProcFS.pid1_age_ms(clk_tck: tck),
+          # main thread only (/proc/self/schedstat is the thread-group leader's counter; see resource-hints.md §2.2)
+          "main_thread_runq_wait_ms" => ms(ProcFS.runq_wait_ms),
+          "main_thread_runq_wait_at_load_ms" => child ? nil : ms(state.load_runq_wait_ms),
           "gc_count" => GC.count, "gc_time_ms" => Insitu.gc_time_ms, "features" => features,
           "i18n_loaded" => state.i18n_loaded.nil? ? Insitu.i18n_loaded? : state.i18n_loaded,
         }

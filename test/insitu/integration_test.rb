@@ -68,6 +68,9 @@ class InsituIntegrationTest < Minitest::Test
     pc = l["phases_cpu_ms"]
     %w[bundler_require initialize load_to_ready load_to_first_response].each { assert_kind_of Numeric, pc[_1], _1 }
     assert_kind_of Integer, l["proc"]["cpu_at_load_ms"]
+    # Linux kernels without CONFIG_SCHED_INFO have no schedstat; both keys are present either way
+    assert l["proc"].key?("main_thread_runq_wait_ms")
+    assert l["proc"].key?("main_thread_runq_wait_at_load_ms")
     assert_equal %w[cgroup cpu_quota nproc mem_max_mb sandbox], l["limits"].keys
     assert_operator l["limits"]["nproc"], :>=, 1
 

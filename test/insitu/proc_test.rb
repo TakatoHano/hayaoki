@@ -38,6 +38,13 @@ class InsituProcTest < Minitest::Test
     assert_nil P.uptime_ms("abc\n")
   end
 
+  def test_runq_wait_ms
+    # /proc/self/schedstat: on-CPU ns, run-queue wait ns, timeslices
+    assert_in_delta 987.654321, P.runq_wait_ms("123456789 987654321 42\n"), 1e-9
+    assert_equal 0.0, P.runq_wait_ms("5 0 1\n")
+    [nil, "", "garbage\n", "123\n", "1 x 2\n", "1 -5 2\n", "/nonexistent/schedstat"].each { assert_nil P.runq_wait_ms(_1), _1.inspect }
+  end
+
   def test_pid1_age
     pid1 = "1 (init) S 0 1 1 0 -1 0 0 0 0 0 1 1 0 0 20 0 1 0 100 1 1 1\n"
     assert_equal 2600 - 1000, P.pid1_age_ms(pid1, "2.6 0\n", clk_tck: 100, pid: 7)
@@ -56,5 +63,6 @@ class InsituProcTest < Minitest::Test
     skip "Linux only" if RUBY_PLATFORM.include?("linux")
     assert_nil P.self_stat
     assert_nil P.uptime_ms
+    assert_nil P.runq_wait_ms
   end
 end

@@ -194,8 +194,8 @@ class InsituEmitterCpuFieldsTest < Minitest::Test
   LIMITS = {"cgroup" => "v2", "cpu_quota" => 2.0, "nproc" => 2, "sandbox" => "gvisor"}.freeze
 
   # marks at wall t (ms after load), cpu at c (ms of CPU)
-  def state(marks, load_cpu: 100.0, limits: LIMITS)
-    st = I::State.new(env: {}, load_ms: 1000.0, load_cpu_ms: load_cpu, id: "abcd1234", start_ms: nil, limits: limits)
+  def state(marks, load_cpu: 100.0, limits: LIMITS, load_runq: 12.6)
+    st = I::State.new(env: {}, load_ms: 1000.0, load_cpu_ms: load_cpu, load_runq_wait_ms: load_runq, id: "abcd1234", start_ms: nil, limits: limits)
     marks.each do |k, (t, c)|
       st.marks[k] = 1000.0 + t
       st.cpu_marks[k] = c
@@ -220,6 +220,17 @@ class InsituEmitterCpuFieldsTest < Minitest::Test
   def test_cpu_at_load_in_proc
     h = I::Emitter.build(state(FULL, load_cpu: 100.4), "ok", env: {})
     assert_equal 100, h["proc"]["cpu_at_load_ms"]
+  end
+
+  # Main-thread run-queue wait (issue #12): rounded at-load value from State, emit value read now
+  # (nil off Linux), both keys always present.
+  def test_main_thread_runq_wait_in_proc
+    h = I::Emitter.build(state(FULL), "ok", env: {})
+    assert_equal 13, h["proc"]["main_thread_runq_wait_at_load_ms"]
+    assert h["proc"].key?("main_thread_runq_wait_ms")
+    v = h["proc"]["main_thread_runq_wait_ms"]
+    RUBY_PLATFORM.include?("linux") ? assert_kind_of(Integer, v) : assert_nil(v)
+    assert_nil I::Emitter.build(state(FULL, load_runq: nil), "ok", env: {})["proc"]["main_thread_runq_wait_at_load_ms"]
   end
 
   def test_ready_from_initialize_when_no_probe
@@ -253,6 +264,7 @@ class InsituEmitterCpuFieldsTest < Minitest::Test
     st.probe_hit!
     h = I::Emitter.build(st, "ok", env: {})
     assert_nil h["proc"]["cpu_at_load_ms"]
+    assert_nil h["proc"]["main_thread_runq_wait_at_load_ms"] # the child's schedstat restarts at fork
     assert_equal "probe", h["ready_source"]
     assert_nil h["phases_cpu_ms"]["load_to_ready"]
   end

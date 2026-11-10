@@ -11,7 +11,7 @@ class HintsTest < Minitest::Test
   # rejected: like the emitter, pre_load is nil and the phases and marks count from load.
   def line(platform: :lambda, memory_mb: 1024, ready: 6800, cpu: 5400, gc_ms: 500, gc_count: 20, bootsnap: false,
            bootsnap_cache: nil, pre_load: 400, rejected: false, status: "ok", revision: "svc-00001-abc", init_type: "on-demand",
-           cpu_at_load: nil, limits: nil, rss_kb: 200_000, worker: false)
+           cpu_at_load: nil, limits: nil, rss_kb: 200_000, worker: false, runq_wait: nil, runq_wait_at_load: nil)
     plat = if platform == :lambda
              { "kind" => "lambda", "function" => "fn", "memory_mb" => memory_mb, "init_type" => init_type }
            else
@@ -22,7 +22,8 @@ class HintsTest < Minitest::Test
             "runtime" => { "bootsnap" => bootsnap, "bootsnap_cache" => bootsnap_cache },
             "phases_ms" => { "pre_load" => rejected ? nil : pre_load, "to_ready" => ready, "to_first_response" => ready + 200 },
             "marks_ms" => { "loaded" => loaded, "first_response_end" => ready + 200 },
-            "proc" => { "cpu_ms" => cpu, "cpu_at_load_ms" => cpu_at_load, "gc_time_ms" => gc_ms, "gc_count" => gc_count, "rss_kb" => rss_kb } }
+            "proc" => { "cpu_ms" => cpu, "cpu_at_load_ms" => cpu_at_load, "gc_time_ms" => gc_ms, "gc_count" => gc_count, "rss_kb" => rss_kb,
+                        "main_thread_runq_wait_ms" => runq_wait, "main_thread_runq_wait_at_load_ms" => runq_wait_at_load } }
     rec["limits"] = limits if limits
     rec["start_rejected"] = { "reason" => "pre_load_over_limit", "pre_load_ms" => 3_600_000 } if rejected
     rec
@@ -156,14 +157,42 @@ class HintsTest < Minitest::Test
     h = hint(shared(3, 0.75), "cpu_bound_boot")
     assert_equal "possible", h.level # quota 2 >= 1
     assert_equal({ "busy_p50" => 0.75, "share_p50" => 0.75, "cpu_ms_p50" => 5100, "wall_ms_p50" => 6800, "quota" => 2.0,
-                   "quota_source" => "cgroup", "from_load_lines" => 3 }, h.evidence)
-    assert_match(/on CPU 75% of the time from load to first response \(median of 3; CPU 5.1 s of 6.8 s; quota 2.0 vCPU\)/, h.message)
+                   "quota_source" => "cgroup", "from_load_lines" => 3, "waited_lines" => 0, "main_thread_runq_wait_ms_p50" => nil }, h.evidence)
+    assert_match(/on CPU 75% of the time from load to first response \(median of 3; CPU 5.1 s of 6.8 s; quota 2.0 vCPU\)\. The process already/, h.message)
+    refute_match(/waited/, h.message)
     assert_match(/already uses about one core/, h.message)
     assert_match(/gVisor \(gen1\) sandbox work shares the same CPU quota/, h.message)
     assert_match(/If startup CPU boost is not on/, h.message)
     refute_match(/quota is not visible/, h.message)
     assert_equal %w[startup_cpu_boost cpu_allocation], h.cannot_see
     refute_match(/gVisor/, hint(shared(3, 0.75, limits: cr(sandbox: nil)), "cpu_bound_boot").message)
+  end
+
+  # Issue #12: the gen1 minimal cell (shares 0.40 0.44 0.72 0.75 0.77 0.78, median 0.72) fires cpu_bound_boot
+  # although two lines waited. The text and evidence say how many lines were at or under WAIT_BUSY.
+  def test_cpu_bound_counts_lines_that_waited
+    recs = [0.40, 0.44, 0.72, 0.75, 0.77, 0.78].flat_map { shared(1, _1) }
+    h = hint(recs, "cpu_bound_boot")
+    assert_equal [0.72, 2], [h.evidence["busy_p50"], h.evidence["waited_lines"]]
+    assert_match(/quota 2.0 vCPU\)\. 2 of 6 lines waited instead: on CPU 50% of the time or less\. The process already/, h.message)
+    refute_includes ids(recs), "wait_dominated_boot"
+    # a line just over WAIT_BUSY does not count; busy (not share) is compared, so a quota below 1 scales it
+    assert_equal 0, hint(shared(2, 0.9) + shared(1, 0.51), "cpu_bound_boot").evidence["waited_lines"]
+    assert_equal 1, hint(shared(2, 0.45, limits: cr(quota: 0.5)) + shared(1, 0.25, limits: cr(quota: 0.5)), "cpu_bound_boot").evidence["waited_lines"]
+    # wait_dominated_boot carries the same count
+    assert_equal 3, hint(shared(3, 0.3), "wait_dominated_boot").evidence["waited_lines"]
+  end
+
+  # Main-thread run-queue wait from load to emit: median over lines with both fields; nil otherwise.
+  def test_cpu_evidence_main_thread_runq_wait
+    recs = shared(1, 0.9, runq_wait: 1500, runq_wait_at_load: 20) + shared(1, 0.9, runq_wait: 900, runq_wait_at_load: 10) +
+           shared(1, 0.9, runq_wait: 400, runq_wait_at_load: 5)
+    assert_equal 890, hint(recs, "cpu_bound_boot").evidence["main_thread_runq_wait_ms_p50"]
+    # a forked child (at_load null) and a line with the emit value below the load value are left out
+    recs = shared(2, 0.3, runq_wait: 3000, runq_wait_at_load: 100) + shared(1, 0.3, runq_wait: 500, worker: true) +
+           shared(1, 0.3, runq_wait: 50, runq_wait_at_load: 100)
+    assert_equal 2900, hint(recs, "wait_dominated_boot").evidence["main_thread_runq_wait_ms_p50"]
+    assert_nil hint(shared(3, 0.3, runq_wait: 500), "wait_dominated_boot").evidence["main_thread_runq_wait_ms_p50"]
   end
 
   def test_cpu_bound_quota_below_one_is_likely_and_busy_clamps
