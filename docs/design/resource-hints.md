@@ -47,6 +47,28 @@ What this tells us:
 - **Lambda Redmine 1024**: one Init hit the 10 s limit (`INIT_REPORT ... Status: timeout`) on the first invoke after a new image. That cold start has no hayaoki line (5 lines for 6 inits). The slowest line that was written took 9.3 s to ready.
 - No cell is close to its memory limit (max RSS 280 MB of 1 GiB), and GC is 5–14% of CPU. The GC and memory rules should stay quiet on all of these.
 
+### 1.1 Re-measurement with 0.3.1 lines (2026-11-10)
+
+Same settings, new GCP project, hayaoki 0.3.1 (adds `limits`, `proc.cpu_at_load_ms`, `phases_cpu_ms`). 6 natural cold starts per cell, 20 min apart. Lambda minimal was not re-measured.
+
+CPU share here is from load: `(cpu_ms - cpu_at_load_ms) / (to_first_response - pre_load)`; for gen2 (start rejected) the wall time is `marks_ms.first_response_end - marks_ms.loaded`.
+
+| Cell | ok (plausible start) | ready p50 | CPU share from load, median | `limits` | RSS p50 | GC / CPU |
+|---|---|---|---|---|---|---|
+| CR gen1 minimal | 6 (6) | 8.0 s | 0.75 | cgroup v1, cpu_quota 2, mem 1024, sandbox gvisor | 144 MB | 6% |
+| CR gen2 minimal | 6 (0) | n/a (start rejected) | 0.29 (5 lines 0.25–0.29; 1 line 0.77) | cgroup v1, cpu_quota 1.97, mem 1024, sandbox null | 89 MB | 9% |
+| CR gen1 Redmine | 6 (6) | 14.6 s | 0.59 | as gen1 minimal | 280 MB | 6% |
+| Lambda Redmine 1024 | 5 (5) | 5.8 s | 0.92 | all null (no cgroup files) | 230 MB | 9% |
+| Lambda Redmine 2048 | 6 (6) | 5.7 s | 0.94 | all null | 229 MB | 9% |
+
+What changed in our understanding:
+
+- **The new fields work.** gen1 shows `sandbox: gvisor`, gen2 does not, so the heuristic separates them. Both expose cgroup v1 files. `cpu_quota` is 2 at load on a cpu=1 service: startup CPU boost is visible from inside (§4).
+- **gen2 waits.** From load, gen2 is on CPU only about 29% of the time, against 75% on gen1 for the same image. `cpu_at_load_ms` made this cell readable, as expected in §3.1. The one 0.77 line is probably the instance that started at deploy time.
+- **Lambda Init does not follow the memory ratio.** At 1024 MB the share is 0.92, above the nominal 0.58 vCPU, which a quota would not allow. 2048 MB is not faster (5.8 vs 5.7 s; the 0.2 run showed 6.8 vs 5.6 s, which was probably runner variance). This matches reports that Init gets host CPU independent of the memory setting for its first 10 s ([L9], [L10]). Not in the official Lambda docs.
+- Cloud Run run-to-run variance is large: gen1 minimal ready p50 was 4.9 s in the 0.2 run and 8.0 s now, with the same image and settings. Hints use shares and medians, not absolute times, partly for this reason.
+- Memory and GC stay far from the thresholds (RSS ≤ 280 MB of 1024 MB; GC 6–9%).
+
 ---
 
 ## 2. Signals
@@ -149,6 +171,16 @@ With 0.2 lines (new fields missing) and the thresholds above:
 
 The rules fire on Redmine (no bootsnap, near the Lambda limit) and on nothing in the Lambda minimal cells, where changing memory made no difference. That is the intended calibration. The gen1 minimal `cpu_bound_boot` is borderline; it is `possible` and its wording mostly points away from adding vCPU.
 
+With 0.3.1 lines (§1.1) and the revised Q2 (no nominal Lambda quota), the 0.4 calibration target is:
+
+| Cell | busy (median) | Hints |
+|---|---|---|
+| CR gen1 minimal | 0.75 (quota 2 → 1.0) | `cpu_bound_boot` possible (already about one core; gVisor note; boost is on) |
+| CR gen2 minimal | 0.29 from load | `wait_dominated_boot` likely; `prestarted_process` note |
+| CR gen1 Redmine | 0.59 | `bootsnap_off` likely; no CPU hint |
+| Lambda Redmine 1024 | 0.92 (quota unknown → 1.0) | `cpu_bound_boot` possible (more memory unlikely to help Init); `bootsnap_off` likely; `lambda_init_near_limit` likely (Init max 7.5 s) |
+| Lambda Redmine 2048 | 0.94 | `cpu_bound_boot` possible; `bootsnap_off` likely |
+
 ---
 
 ## 4. What cannot be seen from inside
@@ -239,7 +271,9 @@ Deferred: hints that compare two groups (for example "2048 MB was 1.2 s faster t
 
 - Scope split: **0.3.0** ships only hints computable from fields 0.2 lines already carry, verifiable on local data without cloud work: `bootsnap_off`, `bootsnap_cache_cold`, `prestarted_process`, `lambda_init_near_limit`, `gc_pressure` (steps 3, 4, 5, 7 and the `gc_pressure` part of 6, then 10). **0.4.0** adds `limits`, `cpu_at_load_ms` / `phases_cpu_ms`, `cpu_bound_boot`, `wait_dominated_boot`, `memory_near_limit` together with the cloud re-measurement (steps 1, 2, rest of 6, 8, 9).
 - Q1: keep 0.70 / 0.50 and 3 s; revisit with 0.4 data.
-- Q2: Lambda uses the nominal `memory_mb / 1769` quota when cgroup gives nothing; wording says "estimate".
+- Q2 (replaced 2026-11-10): Lambda uses the nominal `memory_mb / 1769` quota when cgroup gives nothing; wording says "estimate".
+- Q2 revised (2026-11-10, after §1.1): no nominal quota on Lambda. The quota is unknown there; `cpu_bound_boot` on Lambda is at most `possible`, and its text says that Init reportedly gets CPU independent of memory, so more memory is unlikely to shorten Init; the fix is less CPU work at boot. `lambda_init_near_limit` drops "more memory (more CPU during Init)" from its options.
+- `cpu_bound_boot` wording when quota ≥ 1: do not claim that more vCPU never helps. Say the process already uses about one core; on gVisor (gen1) sandbox work shares the same quota, so more vCPU can still help there.
 - Q3: yes, record a boolean for `AWS_LWA_ASYNC_INIT` presence (not its value).
 - Q4: flag only (`mixed: true`); users split with `--group-by`.
 - Q5: decide after the 0.4 implementation.
@@ -250,6 +284,9 @@ Deferred: hints that compare two groups (for example "2048 MB was 1.2 s faster t
 
 ## Sources
 
+- [L9] Classmethod, "LambdaのINITフェーズではメモリ128MでもCPUパワーをフルに使える?!boost host CPUの動きを確認してみた": https://dev.classmethod.jp/articles/lambda-boost-host-cpu-in-init-phase/ (measured: CPU in the first 10 s of Init is independent of memory)
+- [L10] AWS Lambda Web Adapter, Async Initialization ("up to 10 seconds ... with burst CPU"): https://aws.github.io/aws-lambda-web-adapter/configuration/async-init.html
+
 - phase2.md Sources [L1]–[L7], [C1]–[C3] (Init 10 s limit and INIT_REPORT; LWA async init; Cloud Run startup CPU boost and CPU limits).
 - [L8] Lambda memory and CPU (CPU proportional to memory; 1 vCPU at 1,769 MB): https://docs.aws.amazon.com/lambda/latest/dg/configuration-memory.html — to verify that the figure is current.
-- To verify: whether Cloud Run gen1 (gVisor) and gen2 expose `/sys/fs/cgroup/cpu.max` and `memory.max` to the container; the gVisor `/proc/version` string; whether Lambda Init CPU follows the memory ratio (the 1024 MB share of 0.78 suggests it does not).
+- To verify: whether Cloud Run gen1 (gVisor) and gen2 expose `/sys/fs/cgroup/cpu.max` and `memory.max` to the container; the gVisor `/proc/version` string; answered in §1.1: gen1 and gen2 expose cgroup v1 files, the gVisor check works, Lambda Init CPU does not follow the memory ratio.
