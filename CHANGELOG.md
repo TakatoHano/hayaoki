@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.0] - 2026-11-10
+
+### Added
+
+- Three hints: `cpu_bound_boot`, `wait_dominated_boot` and `memory_near_limit`. They use the 0.3.1 line fields (`limits`, `proc.cpu_at_load_ms`).
+- CPU share is measured from load, so it also works on Cloud Run gen2, where the process start is rejected.
+
+### Changed
+
+- Lambda: no CPU quota is estimated from the memory setting, because Init CPU reportedly does not follow memory.
+- `lambda_init_near_limit` no longer suggests more memory.
+
+### Fixed
+
+- The hints header states the ok line count and the plausible-start count separately. The "at least 3" note appears only when it applies.
+
 ## [0.3.1] - 2026-11-10
 
 ### Added

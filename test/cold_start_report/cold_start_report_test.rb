@@ -213,7 +213,8 @@ class ColdStartReportTest < Minitest::Test
   def test_hints_text_three_none_and_too_few
     r = Hayaoki::ColdStartReport.build([hint_input(5, ready: 8000) + INIT_TIMEOUT + "\n"])
     out = Hayaoki::ColdStartReport::Formatters::Text.new.format(r)
-    assert_includes out, "Hints (likely causes outside app code; based on 5 ok cold starts with a plausible start)"
+    assert_includes out, "Hints (likely causes outside app code; based on 5 ok cold starts, 5 with a plausible start)"
+    refute_includes out, "Start-based hints"
     rows = out.lines.grep(/^  (likely|possible|note) /).map { _1.split[0..1] }
     assert_equal [%w[likely bootsnap_off], %w[likely lambda_init_near_limit], %w[possible gc_pressure]], rows
     assert_includes out, "Cannot see: AWS_LWA_ASYNC_INIT, image pull and layer caching, RUBY_GC_* settings"
