@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- In-situ lines gain `proc.main_thread_runq_wait_ms` and `proc.main_thread_runq_wait_at_load_ms`: the main thread's run-queue wait from `/proc/self/schedstat` at emit and at load (null where the file is missing, and the at-load value is null in a forked worker). Main thread only; see docs/design/resource-hints.md §2.2.1. The line version stays 1.
+- `cpu_bound_boot` says "k of n lines waited instead" when the median is CPU-bound but some lines were on CPU half the time or less. Both CPU hints add `waited_lines` and `main_thread_runq_wait_ms_p50` to their evidence.
+
 ## [0.4.0] - 2026-11-10
 
 ### Added

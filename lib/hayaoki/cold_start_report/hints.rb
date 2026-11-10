@@ -86,6 +86,16 @@ module Hayaoki
           fre && loaded ? fre - loaded : nil
         end
 
+        # Main-thread run-queue wait from load to emit (ms), or nil: needs both proc fields, so a
+        # forked child (at_load null) and lines before the fields exist give nil.
+        def main_thread_runq_wait_ms(r)
+          at_emit = num(r.dig("proc", "main_thread_runq_wait_ms"))
+          at_load = num(r.dig("proc", "main_thread_runq_wait_at_load_ms"))
+          return nil unless at_emit && at_load
+          d = at_emit - at_load
+          d >= 0 ? d : nil
+        end
+
         # median limits.cpu_quota over the set; nil when no line has one (Lambda: no cgroup files, and
         # no nominal memory/1769 estimate, see §9 Q2 revised)
         def quota(set = cpu_set)

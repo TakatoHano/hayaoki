@@ -105,8 +105,25 @@ Platform lines already parsed by the reader: Lambda `Init Duration`. New in the 
 | `limits.sandbox` | `"gvisor"` when `/proc/version` matches the gVisor fake kernel string; else null | at load | 1 read | heuristic; the string itself is never logged |
 | `proc.cpu_at_load_ms` | `Clock.cpu_ms` at the `loaded` mark (null in a forked child) | at load | ~1 µs | lets the report compute CPU share from load (gen2, rejected starts) |
 | `phases_cpu_ms` | `Clock.cpu_ms` at the bundler / initialize / ready / first-response marks | at each mark | ~1 µs × 5 | like `phases_ms`: duplicates derivable data so log queries need no math |
+| `proc.main_thread_runq_wait_at_load_ms` | field 2 of `/proc/self/schedstat` (ns runnable but not on a CPU) at the `loaded` mark; null in a forked child | at load | 1 small read | issue #12; see §2.2.1 |
+| `proc.main_thread_runq_wait_ms` | same counter at emit | at emit | 1 small read | null when the file is missing (non-Linux, kernel without `CONFIG_SCHED_INFO`, possibly gVisor) |
 
 Overhead: all reads together are well under 1 ms, done once per process, inside the 0.2 budget (phase2.md §2.3). Every reader returns nil on any error and never raises (same pattern as `ProcFS`).
+
+#### 2.2.1 Run-queue wait: main thread only (issue #12, 2026-11-10)
+
+The CPU rules cannot tell two kinds of non-CPU time apart: runnable but not scheduled (CPU quota throttling, host contention) and blocked (file IO, slow under gVisor; network). `/proc/self/schedstat` field 2 counts the first kind, so the two fields above let a later check split them.
+
+Scope decision: `/proc/self/schedstat` is `/proc/<tgid>/schedstat`, the thread-group leader's own counter, while `proc.cpu_ms` is `CLOCK_PROCESS_CPUTIME_ID` over all threads. The options were (a) main thread at load and at emit, (b) a sum over `/proc/self/task/*/schedstat` at emit, (c) an extra read at `initialize_end`. We chose (a) and named the fields after it:
+
+- Boot (`loaded` to `initialize_end`) runs on the main thread, so its wait is covered exactly. After `initialize_end` the main thread in a Puma process starts the server and then sleeps, so its counter barely moves: the difference emit minus load is in practice the boot wait. The first request runs on a server thread and is not in it; in a single-threaded server it is.
+- (b) costs one read per thread (Puma: 5 to 16 plus Ruby's timer thread), loses threads that exited, and at load there is only one thread anyway. (c) adds a `/proc` read to a mark that today costs one clock call, for a value that (a) already approximates.
+- So `main_thread_runq_wait_ms - main_thread_runq_wait_at_load_ms` is comparable with `phases_cpu_ms.load_to_ready` and the wall time `to_ready - pre_load` (or `marks_ms.initialize_end - marks_ms.loaded`), not one to one with `cpu_ms`, which includes the server threads. The report shows the median as evidence (`main_thread_runq_wait_ms_p50`) on the two CPU hints and does not use it in a rule yet.
+- Forked child: the child's schedstat starts at zero like its CPU clock, so `*_at_load_ms` is null there (same rule as `cpu_at_load_ms`) and `main_thread_runq_wait_ms` covers the child's main thread since fork.
+
+Cloud check before any rule uses it: do Cloud Run gen1 (gVisor), gen2 and Lambda (Firecracker) expose `/proc/self/schedstat` with real values? gVisor implements its own `/proc`; it may omit the file (then both fields are null) or report zeros. On gen2 and Lambda the kernel needs `CONFIG_SCHED_INFO`. A value that stays at zero over a 6 s boot on a cell with a known quota below 1 vCPU would mean the counter is not trustworthy there. Until then `wait_dominated_boot` keeps its combined wording.
+
+Smaller change shipped with the fields: when `cpu_bound_boot` fires on the median but some lines are at or under `WAIT_BUSY`, the text adds "k of n lines waited instead: on CPU 50% of the time or less" and the evidence carries `waited_lines` (gen1 minimal: 2 of 6).
 
 Privacy: only numbers and fixed tokens (`v1`/`v2`/`gvisor`). No paths, no kernel version string, no hostnames, no env values. `phases_cpu_ms` is process CPU time, which says nothing about requests or users.
 
@@ -144,6 +161,7 @@ Wording (text output; `{}` are evidence values; the trailing "Cannot see" part c
   - Lambda, quota < 1: "More memory gives more CPU and will likely shorten Init. Try {next memory step} MB."
   - Cloud Run, quota < 1: "More CPU will likely shorten boot: cpu=1 or more, and startup CPU boost."
   - quota ≥ 1 or unknown: "Ruby boot runs mostly on one thread, so more than one vCPU probably helps little. If startup CPU boost is not on, turn it on. Otherwise the remaining fix is less CPU work at boot: see `hayaoki boot-report`."
+  - When some lines are at or under `WAIT_BUSY` while the median passes 0.70, add: "{k} of {n} lines waited instead: on CPU 50% of the time or less." (issue #12; evidence `waited_lines`).
   - False positives: `cpu_ms` includes the first request and (without `cpu_at_load_ms`) the time before load; background threads can push share up; with an unknown quota a throttled CPU is not visible; lines with `worker: true` (forked child) have no `cpu_at_load_ms` and the old share is wrong there (the child's CPU clock restarts), so rules skip `worker: true` lines without it.
 - **wait_dominated_boot**: "Boot likely spent most of its time waiting, not computing: on CPU {busy}% of the time (median of {n}). More CPU is unlikely to help. Likely causes: file IO (no bootsnap cache, many small files, lazily pulled image layers), network calls during boot (DB, secrets, HTTP in initializers), or CPU throttled before the first request." Cloud Run adds: "Try the other execution environment (gen1/gen2); file IO cost differs between them." With `sandbox: gvisor`: "gVisor system-call work is probably not counted as process CPU."
   - False positives: an unknown quota below 1 vCPU looks like waiting (hence `busy`, and the quota-unknown text says so); a frozen-then-thawed process on gen2 without `cpu_at_load_ms` (the rule skips rejected starts in that case); lines with `worker: true` (forked child) have no `cpu_at_load_ms` and the old share is wrong there, so the rule skips them.
@@ -278,6 +296,7 @@ Deferred: hints that compare two groups (for example "2048 MB was 1.2 s faster t
 - `cpu_bound_boot` wording when quota ≥ 1: do not claim that more vCPU never helps. Say the process already uses about one core; on gVisor (gen1) sandbox work shares the same quota, so more vCPU can still help there.
 - `G_ready` for the CPU rules (0.4 implementation): the gate runs over the set the rule reads, not only `ok_p`. A rejected start (gen2) has the load mark as origin, so its `to_ready` is already from load; a 0.2.0 bad `/proc` start is corrected by subtracting `pre_load`. Without this, gen2 cells (all starts rejected) could never get `wait_dominated_boot`. §3 only names `ok_p`; this is the stricter reading for plausible lines and the only workable one for the rest.
 - Thresholds after step 8 (0.4, local 0.3.1 data): unchanged. Measured medians with the report's nearest-rank median: gen1 minimal 0.72 (§1.1 says 0.75: the mean of the two middle lines; two of six lines waited at about 0.4), gen2 0.29, gen1 Redmine 0.59, Lambda Redmine 0.90 / 0.93. Every cell lands where the second §3.1 table says. gen1 minimal stays the borderline case (0.72 against 0.70).
+- Run-queue wait (2026-11-10, issue #12): record `/proc/self/schedstat` field 2 for the main thread at load and at emit (`proc.main_thread_runq_wait_at_load_ms`, `proc.main_thread_runq_wait_ms`), not a per-thread sum and no extra read at other marks; reasons in §2.2.1. The rules only show its median as evidence and add the "k of n lines waited" note; splitting `wait_dominated_boot` into CPU-wait and IO-wait text waits for the cloud check.
 - Q3: yes, record a boolean for `AWS_LWA_ASYNC_INIT` presence (not its value).
 - Q4: flag only (`mixed: true`); users split with `--group-by`.
 - Q5: decide after the 0.4 implementation.

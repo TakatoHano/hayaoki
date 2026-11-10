@@ -35,6 +35,13 @@ module Hayaoki
         nil
       end
 
+      # Main-thread run-queue wait in ms (/proc/self/schedstat), nil when unavailable
+      def main_thread_runq_wait_ms
+        ProcFS.runq_wait_ms
+      rescue StandardError
+        nil
+      end
+
       # Load-time part of the "limits" object (cgroup, cpu_quota, nproc, sandbox); {} on failure
       def read_limits
         require_relative "limits"
@@ -57,17 +64,21 @@ module Hayaoki
       MARKS = %i[loaded bundler_require_start bundler_require_end initialize_start initialize_end
                  first_probe first_request_start first_response_end forked].freeze
 
-      attr_reader :id, :load_pid, :load_ms, :start_ms, :entry, :marks, :cpu_marks, :limits, :eager_by, :out, :emit_mode, :probe_hits, :fork_gen
+      attr_reader :id, :load_pid, :load_ms, :start_ms, :entry, :marks, :cpu_marks, :load_runq_wait_ms, :limits, :eager_by, :out, :emit_mode,
+                  :probe_hits, :fork_gen
       attr_accessor :boot_error, :i18n_loaded, :first_request, :bootsnap_cache, :eager_ms, :server
 
       # `start_ms`: process start (P1) on the Clock scale, read once here so a forked worker
       # keeps the start of the process that booted the app (preload_app!). :auto reads /proc.
+      # `load_runq_wait_ms`: main-thread run-queue wait at load (one /proc read); the emitter reads it
+      # again at emit, so the difference covers load -> emit for the thread that boots the app.
       def initialize(env: ENV, entry: "boot_rb", load_ms: Clock.now_ms, pid: Process.pid, id: nil, bootsnap_cache: nil,
-                     start_ms: :auto, load_cpu_ms: Insitu.cpu_ms, limits: :auto)
+                     start_ms: :auto, load_cpu_ms: Insitu.cpu_ms, load_runq_wait_ms: Insitu.main_thread_runq_wait_ms, limits: :auto)
         @id = id || Random.urandom(4).unpack1("H*")
         @load_pid = pid
         @load_ms = load_ms
         @start_ms = start_ms == :auto ? Clock.process_start_ms : start_ms
+        @load_runq_wait_ms = load_runq_wait_ms
         # nil until initialize! snapshots Insitu.server_process? (false in rake / console / job workers)
         @server = nil
         @entry = entry

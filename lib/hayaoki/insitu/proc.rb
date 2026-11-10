@@ -49,6 +49,19 @@ module Hayaoki
         nil
       end
 
+      # Run-queue wait of the main thread in ms: field 2 of /proc/self/schedstat (ns spent runnable
+      # but not on a CPU). /proc/<pid>/schedstat is the thread-group leader's own counter, not a sum
+      # over threads. nil when the file is missing (non-Linux, kernel without CONFIG_SCHED_INFO,
+      # gVisor may not implement it) or malformed.
+      def runq_wait_ms(src = nil)
+        f = read(src, "/proc/self/schedstat")&.split
+        return nil unless f && f.size >= 2
+        ns = Integer(f[1], 10)
+        ns >= 0 ? ns / 1_000_000.0 : nil
+      rescue ArgumentError, TypeError
+        nil
+      end
+
       # Age of pid 1 in ms; nil when we are pid 1 (age would equal our own) or unreadable.
       def pid1_age_ms(stat_src = nil, uptime_src = nil, clk_tck: 100, pid: Process.pid)
         return nil if pid == 1
