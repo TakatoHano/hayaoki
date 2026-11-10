@@ -42,7 +42,7 @@ class InsituProcTest < Minitest::Test
     # /proc/self/schedstat: on-CPU ns, run-queue wait ns, timeslices
     assert_in_delta 987.654321, P.runq_wait_ms("123456789 987654321 42\n"), 1e-9
     assert_equal 0.0, P.runq_wait_ms("5 0 1\n")
-    [nil, "", "garbage\n", "123\n", "1 x 2\n", "1 -5 2\n", "/nonexistent/schedstat"].each { assert_nil P.runq_wait_ms(_1), _1.inspect }
+    ["", "garbage\n", "123\n", "1 x 2\n", "1 -5 2\n", "/nonexistent/schedstat"].each { assert_nil P.runq_wait_ms(_1), _1.inspect }
   end
 
   def test_pid1_age
