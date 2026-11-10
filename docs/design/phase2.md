@@ -37,7 +37,7 @@ As in Phase 1, nothing here makes boot faster by being installed. The templates 
 | P5e | eager_load (inside P5) | Yes | Same hooks as probe H9/H9b: `Zeitwerk::Loader#eager_load` plus each `eager_load_namespaces` member's `eager_load!`. Durations are summed; the top 5 namespaces are kept. | This is where TZInfo, I18n and AbstractController show up. |
 | P6 | Server listening / platform says ready | Indirectly | Time of the first request to an ignored health path (`/up`, `AWS_LWA_READINESS_CHECK_PATH`) = `first_probe`. If there is none, `ready := initialize_end` with `ready_source: "initialize"`. | A Puma plugin would give the exact listen time. Deferred (§7). |
 | P7 | First real request received | Yes | Rack middleware at position 0 | Health paths are excluded. |
-| P8 | First response sent | Yes | `Rack::BodyProxy` close of that response | This includes body streaming time. It does not include network time to the client. |
+| P8 | First response sent | Yes | `Rack::BodyProxy` close of that response. On Lambda: the return of the app call, before the body is sent (§2.2, `HAYAOKI_INSITU_EMIT_AT`). | At body close this includes body streaming time. At app return it does not include body iteration or the send. Neither includes network time to the client. |
 
 Platform facts this relies on (verified 2026-11-08):
 
@@ -96,6 +96,15 @@ require "bootsnap/setup"
 | `HAYAOKI_INSITU_OUT` | `stdout` | `stdout`, `stderr`, or a file path (append) |
 | `HAYAOKI_INSITU_IGNORE_PATHS` | `/up` + `$AWS_LWA_READINESS_CHECK_PATH` | comma separated; these requests set `first_probe` and do not count as the first request |
 | `HAYAOKI_INSITU_EMIT` | `first_request` | `first_request`, or `ready` (emit at `initialize_end`; for apps whose first request may never come) |
+| `HAYAOKI_INSITU_EMIT_AT` | `app_return` on Lambda, else `body_close` | Where the first request ends and the line is written. `body_close`: when the server closes the response body. `app_return`: when the app returns the response, before the body is sent. Other values are ignored. No effect with `HAYAOKI_INSITU_EMIT=ready`. |
+
+Why Lambda differs (found in 0.4.1 with Lambda Web Adapter 1.1.0 and Puma 8.0.2): Lambda freezes the execution environment as soon as the response is returned. The body close, and so the write of the line, ran only when the same environment was invoked again, and never if it was reclaimed first. On Lambda the line is therefore written when the app returns:
+
+- `first_response_end`, `phases_ms.first_request`, `to_first_response` and `phases_cpu_ms.load_to_first_response` end at the app return. Body iteration and the send are not included. For a buffered Rails response this is small, because the body is already rendered; for a streaming body (`ActionController::Live`, `send_file`, a lazy enumerator) the stream time is left out.
+- A body that raises while it is sent does not change the line: it is already written with `status: "ok"` and the app's status code.
+- `first_request.end_at` tells which point was used: `body_close`, `app_return`, or `app_raise` (the app call raised; any platform). Lines from 0.4.1 and earlier have no `end_at`; they are `body_close`, or `app_raise` when the status is 500 from an exception.
+- Lambda is detected in `State#initialize` from the env (`AWS_LAMBDA_FUNCTION_NAME` set and `K_SERVICE` not set, the same rule as `platform.kind`). `Platform` is still loaded only at emit time. The cost is two hash lookups at load and one boolean test on the first request.
+- Set `HAYAOKI_INSITU_EMIT_AT=app_return` on another platform that stops the CPU right after the response, if lines go missing there. Set `body_close` on Lambda to get the old behaviour.
 
 ### 2.3 Overhead budget
 
@@ -147,11 +156,11 @@ Checked by `bench/insitu_overhead.rb` (an A/B run like Phase 1 §8.3). It is a n
 ```
 
 - `platform.kind`: `cloud_run` (if `K_SERVICE` is set), `lambda` (if `AWS_LAMBDA_FUNCTION_NAME` is set; adds `function`, `version`, `memory_mb`, `init_type` from `AWS_LAMBDA_INITIALIZATION_TYPE`, and `log_stream` from `AWS_LAMBDA_LOG_STREAM_NAME`; these var names are still to be checked against the AWS env-var reference), or `generic`.
-- Fields added in the implementation: `start_rejected` (only when the `/proc` start was not used; §4.1), `ready_source` (`probe` / `initialize` / null), `error_class` (only with `boot_error`), `first_request.gc_time_ms`. `runtime.bootsnap_cache` = whether `<cache_dir>/bootsnap` existed when hayaoki loaded (before `bootsnap/setup`); null if bootsnap was already loaded. `eager_top` names are namespaces (`TZInfo`) or Zeitwerk loader tags (`rails.main`); only the outermost eager-load call is timed, so nested calls are not counted twice. `first_request.new_by_group` keeps the top 5 groups. `severity` is `ERROR` for `boot_error`.
+- Fields added in the implementation: `start_rejected` (only when the `/proc` start was not used; §4.1), `ready_source` (`probe` / `initialize` / null), `error_class` (only with `boot_error`), `first_request.gc_time_ms`, `first_request.end_at` (§2.2). `runtime.bootsnap_cache` = whether `<cache_dir>/bootsnap` existed when hayaoki loaded (before `bootsnap/setup`); null if bootsnap was already loaded. `eager_top` names are namespaces (`TZInfo`) or Zeitwerk loader tags (`rails.main`); only the outermost eager-load call is timed, so nested calls are not counted twice. `first_request.new_by_group` keeps the top 5 groups. `severity` is `ERROR` for `boot_error`.
 - Fields added since 0.3.1, all optional and the version stays 1: `limits`, `proc.cpu_at_load_ms`, `phases_cpu_ms`, `proc.main_thread_runq_wait_ms` and `proc.main_thread_runq_wait_at_load_ms`. They are listed in [resource-hints.md §2.2](resource-hints.md#22-new-fields-additive-schema-stays-v1).
 - `ready` uses `first_probe` only when it is not later than `first_request_start`; otherwise `initialize_end`.
 - With `HAYAOKI_INSITU_EMIT=ready` the middleware is not inserted and the message has no "first response" part.
-- `status`: `ok`; `no_request` (emitted at `at_exit` before any real request); `incomplete` (emitted at `at_exit` when the first request started in this process but its response never finished: body never closed, hijack, or stopped mid-request; `first_request` is null); `boot_error` (`initialize!` raised; logs `error_class` only).
+- `status`: `ok`; `no_request` (emitted at `at_exit` before any real request); `incomplete` (emitted at `at_exit` when the first request started in this process but its response never finished: body never closed, hijack, or stopped mid-request. With `app_return` the response counts as finished when the app returns, so only a process stopped inside the app call is `incomplete`; `first_request` is null); `boot_error` (`initialize!` raised; logs `error_class` only).
 - `ready` = `first_probe` when present, else `initialize_end`. `ready_source` tells which.
 - `phases_ms` duplicates what can be derived from `marks_ms`, so plain queries in Cloud Logging and Logs Insights work without any math. Null marks produce null phases.
 - `id`: 8 random hex characters per process. It joins worker lines from the same boot (`worker: true` when pid ≠ the pid at load, for example Puma cluster workers). One line per serving process.

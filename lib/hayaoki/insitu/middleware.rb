@@ -5,8 +5,8 @@ require_relative "state"
 module Hayaoki
   module Insitu
     # Inserted at position 0 of the Rails stack (Insitu.before_initialize). Watches the first
-    # non-probe request of the process, emits the line when its body is closed, then becomes a
-    # pass-through (one pid compare per request). Also usable in a non-Rails Rack app:
+    # non-probe request of the process, emits the line when its body is closed (on Lambda: when the
+    # app returns, State#emit_at), then becomes a pass-through (one compare per request). Also usable in a non-Rails Rack app:
     # `use Hayaoki::Insitu::Middleware` (pass-through when insitu is off).
     class Middleware
       TOP_GROUPS = 5
@@ -15,6 +15,7 @@ module Hayaoki
         @app = app
         @state = state
         @ignore = state ? state.ignore_paths : []
+        @at_return = state ? state.emit_at == "app_return" : false
         @done_gen = nil # fork generation that already claimed or gave up; forked children start over
       end
 
@@ -56,26 +57,29 @@ module Hayaoki
         begin
           status, headers, body = @app.call(env)
         rescue Exception # record, then let the app exception go on
-          finish(env, 500, snap)
+          finish(env, 500, snap, "app_raise")
           raise
         end
-        if defined?(::Rack::BodyProxy)
-          body = ::Rack::BodyProxy.new(body) { finish(env, status, snap) }
+        # Lambda freezes the environment after the response is sent; a body-close block may run only
+        # on the next invoke, or never. There the line is written here, before the body is iterated.
+        if @at_return || !defined?(::Rack::BodyProxy)
+          finish(env, status, snap, "app_return")
         else
-          finish(env, status, snap)
+          body = ::Rack::BodyProxy.new(body) { finish(env, status, snap, "body_close") }
         end
         [status, headers, body]
       end
 
       # Runs once (BodyProxy calls the block once). Never raises.
-      def finish(env, status, snap)
+      # `end_at`: where first_response_end was taken ("body_close", "app_return" or "app_raise").
+      def finish(env, status, snap, end_at)
         st = @state
         st.mark(:first_response_end)
         _, f0, gc0, gct0 = snap
         added = $LOADED_FEATURES.size > f0 ? $LOADED_FEATURES[f0..] : []
         gct = Insitu.gc_time_ms
         st.first_request = {
-          "route" => route(env), "status" => status.to_i, "probe_hits" => st.probe_hits,
+          "route" => route(env), "status" => status.to_i, "probe_hits" => st.probe_hits, "end_at" => end_at,
           "new_features" => added.size, "new_by_group" => groups(added),
           "gc_count" => GC.count - gc0, "gc_time_ms" => gct && gct0 ? gct - gct0 : nil,
         }
