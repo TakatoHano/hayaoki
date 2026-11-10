@@ -171,6 +171,8 @@ With 0.2 lines (new fields missing) and the thresholds above:
 
 The rules fire on Redmine (no bootsnap, near the Lambda limit) and on nothing in the Lambda minimal cells, where changing memory made no difference. That is the intended calibration. The gen1 minimal `cpu_bound_boot` is borderline; it is `possible` and its wording mostly points away from adding vCPU.
 
+Note (2026-11-10, Q2 revised): with no nominal Lambda quota, the 0.2 Lambda Redmine 1024 row becomes `cpu_bound_boot` **possible** (busy 0.76, not clamped to 1.0) with the Init-CPU wording instead of "try 2048 MB". The 0.2 calibration test (`test_calibration_0_2_*`) expects that; the table above is kept as the record of the 0.2 reading.
+
 With 0.3.1 lines (§1.1) and the revised Q2 (no nominal Lambda quota), the 0.4 calibration target is:
 
 | Cell | busy (median) | Hints |
@@ -274,6 +276,8 @@ Deferred: hints that compare two groups (for example "2048 MB was 1.2 s faster t
 - Q2 (replaced 2026-11-10): Lambda uses the nominal `memory_mb / 1769` quota when cgroup gives nothing; wording says "estimate".
 - Q2 revised (2026-11-10, after §1.1): no nominal quota on Lambda. The quota is unknown there; `cpu_bound_boot` on Lambda is at most `possible`, and its text says that Init reportedly gets CPU independent of memory, so more memory is unlikely to shorten Init; the fix is less CPU work at boot. `lambda_init_near_limit` drops "more memory (more CPU during Init)" from its options.
 - `cpu_bound_boot` wording when quota ≥ 1: do not claim that more vCPU never helps. Say the process already uses about one core; on gVisor (gen1) sandbox work shares the same quota, so more vCPU can still help there.
+- `G_ready` for the CPU rules (0.4 implementation): the gate runs over the set the rule reads, not only `ok_p`. A rejected start (gen2) has the load mark as origin, so its `to_ready` is already from load; a 0.2.0 bad `/proc` start is corrected by subtracting `pre_load`. Without this, gen2 cells (all starts rejected) could never get `wait_dominated_boot`. §3 only names `ok_p`; this is the stricter reading for plausible lines and the only workable one for the rest.
+- Thresholds after step 8 (0.4, local 0.3.1 data): unchanged. Measured medians with the report's nearest-rank median: gen1 minimal 0.72 (§1.1 says 0.75: the mean of the two middle lines; two of six lines waited at about 0.4), gen2 0.29, gen1 Redmine 0.59, Lambda Redmine 0.90 / 0.93. Every cell lands where the second §3.1 table says. gen1 minimal stays the borderline case (0.72 against 0.70).
 - Q3: yes, record a boolean for `AWS_LWA_ASYNC_INIT` presence (not its value).
 - Q4: flag only (`mixed: true`); users split with `--group-by`.
 - Q5: decide after the 0.4 implementation.

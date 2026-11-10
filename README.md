@@ -86,12 +86,19 @@ Hints need at least 3 ok cold starts with a plausible start. With fewer, the rep
 | `bootsnap_cache_cold` | bootsnap is on, but its cache dir did not exist at boot in at least half | likely |
 | `gc_pressure` | median GC time is 20% or more of boot CPU time | possible |
 | `lambda_init_near_limit` | Lambda only: any Init timeout, or p90 of Init or `to_ready` is 7 s or more (limit 10 s) | likely |
+| `cpu_bound_boot` | median CPU share of boot is 70% or more (of one core, or of the quota if below 1 vCPU) | likely if quota < 1 vCPU (not Lambda), else possible |
+| `wait_dominated_boot` | median CPU share of boot is 50% or less | likely |
+| `memory_near_limit` | median RSS is 80% or more of the memory limit, or any line is 90% or more | likely |
 | `prestarted_process` | at least half of the lines have a rejected or implausible process start | note |
+
+CPU share is CPU time divided by wall time from load. It needs lines from hayaoki 0.3.1 or later, and `cpu_bound_boot` and `wait_dominated_boot` also need a median ready time of 3 s or more. Preloaded forked worker lines are skipped by the CPU rules.
+
+On Lambda the CPU quota is unknown, and Init CPU reportedly does not follow the memory setting, so these hints do not suggest more memory. See [this article](https://dev.classmethod.jp/articles/lambda-boost-host-cpu-in-init-phase/) and the [Lambda Web Adapter async init docs](https://aws.github.io/aws-lambda-web-adapter/configuration/async-init.html).
 
 Example:
 
 ```
-Hints (likely causes outside app code; based on 12 ok cold starts with a plausible start)
+Hints (likely causes outside app code; based on 12 ok cold starts, 12 with a plausible start)
   likely    bootsnap_off            bootsnap was not loaded in 12 of 12 cold starts. ...
   possible  gc_pressure             GC took 24% of boot CPU (median 410 ms of 1700 ms, 18 GCs). ...
 ```

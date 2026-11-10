@@ -7,7 +7,9 @@ module Hayaoki
     module Formatters
       class Text
         CANNOT_SEE = { "aws_lwa_async_init" => "AWS_LWA_ASYNC_INIT", "image_pull" => "image pull and layer caching",
-                       "cpu_allocation" => "Cloud Run CPU allocation", "ruby_gc_env" => "RUBY_GC_* settings" }.freeze
+                       "cpu_allocation" => "Cloud Run CPU allocation", "ruby_gc_env" => "RUBY_GC_* settings",
+                       "startup_cpu_boost" => "Cloud Run startup CPU boost",
+                       "execution_environment" => "Cloud Run execution environment (gen1/gen2)" }.freeze
 
         def format(result)
           out = ["hayaoki cold-start-report"]
@@ -93,9 +95,9 @@ module Hayaoki
             out << "Hints: #{n < Hints::MIN_N ? few : "none (n=#{n})"}"
             return
           end
-          out << "Hints (likely causes outside app code; based on #{n} ok cold starts with a plausible start)"
+          out << "Hints (likely causes outside app code; based on #{s["n_ok"]} ok cold starts, #{n} with a plausible start)"
           list.each { |h| out << Kernel.format("  %-9s %-23s %s", h["level"], h["id"], h["message"]) }
-          out << "            Most #{few}." if n < Hints::MIN_N
+          out << "            Start-based hints (bootsnap, GC, Lambda Init) need at least #{Hints::MIN_N} ok cold starts with a plausible start (have #{n}); skipped." if n < Hints::MIN_N
           if (keys = s["hints_mixed"])
             names = keys.map { _1.split(".").last }
             out << "            Lines come from different configurations (#{names.join(", ")}); try --group-by #{names.first}."
