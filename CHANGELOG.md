@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Lambda: the in-situ line was written at body close, after Lambda had frozen the environment, so it showed up only on the next invoke of the same environment or not at all. On Lambda the line is now written when the app returns the response. There `first_response_end`, `first_request` and `to_first_response` leave out body iteration and the send. Other platforms still write at body close.
+
+### Added
+
+- `first_request.end_at` (`body_close`, `app_return` or `app_raise`) says where the first request was taken to end. The line version stays 1.
+- `HAYAOKI_INSITU_EMIT_AT` (`app_return` or `body_close`) overrides the default.
+
 ## [0.4.1] - 2026-11-10
 
 ### Added

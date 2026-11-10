@@ -65,7 +65,7 @@ module Hayaoki
                  first_probe first_request_start first_response_end forked].freeze
 
       attr_reader :id, :load_pid, :load_ms, :start_ms, :entry, :marks, :cpu_marks, :load_runq_wait_ms, :limits, :eager_by, :out, :emit_mode,
-                  :probe_hits, :fork_gen
+                  :emit_at, :probe_hits, :fork_gen
       attr_accessor :boot_error, :i18n_loaded, :first_request, :bootsnap_cache, :eager_ms, :server
 
       # `start_ms`: process start (P1) on the Clock scale, read once here so a forked worker
@@ -97,9 +97,20 @@ module Hayaoki
         @forker_pid = nil
         @out = env["HAYAOKI_INSITU_OUT"].to_s.empty? ? "stdout" : env["HAYAOKI_INSITU_OUT"]
         @emit_mode = env["HAYAOKI_INSITU_EMIT"] == "ready" ? "ready" : "first_request"
+        @emit_at = emit_at_for(env)
         # Platform (and the other emit-time files) load lazily to keep boot cost down (§2.3).
         @ignore_env = env.to_h.slice("HAYAOKI_INSITU_IGNORE_PATHS", "AWS_LWA_READINESS_CHECK_PATH")
         @bootsnap_cache = bootsnap_cache
+      end
+
+      # Where the first request ends and the line is written: "body_close" (Rack::BodyProxy close) or
+      # "app_return" (when the app returns the response, before the body is sent). Lambda freezes the
+      # environment once the response is out, so a write at body close may never run there (§2.2).
+      # Same test as Platform.kind == "lambda", done here so Platform stays unloaded at boot.
+      def emit_at_for(env)
+        v = env["HAYAOKI_INSITU_EMIT_AT"]
+        return v if v == "app_return" || v == "body_close"
+        env["AWS_LAMBDA_FUNCTION_NAME"].to_s.empty? || !env["K_SERVICE"].to_s.empty? ? "body_close" : "app_return"
       end
 
       def ignore_paths
