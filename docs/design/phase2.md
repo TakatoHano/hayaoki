@@ -110,12 +110,12 @@ Why Lambda differs (found in 0.4.1 with Lambda Web Adapter 1.1.0 and Puma 8.0.2)
 
 | Item | Budget | How we hold it |
 |---|---|---|
-| Boot | < 2 ms total | 5 prepends, no Kernel hooks, no allocation per require |
+| Boot | < 5 ms total on a GitHub ubuntu runner (measured 4.1 ms, 2026-11-11) | 5 prepends, no Kernel hooks, no allocation per require; most of it is loading hayaoki's own files |
 | Per request after the first | one ivar check (< 100 ns) | the middleware switches to pass-through after it emits |
-| Emit | < 2 ms, line ≤ 4 KB | small encoder, `/proc` reads, `$LOADED_FEATURES` slice |
+| First request incl. emit | < 8 ms on a GitHub ubuntu runner (measured 6.4 ms, 2026-11-11), line ≤ 4 KB | small encoder, `/proc` reads, `$LOADED_FEATURES` slice and grouping |
 | Memory | < 100 KB | only the feature-count snapshot (an Integer) and ≤ 20 strings |
 
-Checked by `bench/insitu_overhead.rb` (an A/B run like Phase 1 §8.3). It is a nightly workflow, not a gating test.
+Checked weekly by `bench/insitu_breakdown.rb` (A/B per boot step) and `bench/insitu_overhead.rb` (whole process, which varies by about ±15 ms between runs, too noisy for a few ms). Not a gating test. The first budget (< 2 ms each) was set before measuring; it was revised on 2026-11-11 (issue #22): about 10 ms in all is about 0.2% of a 5–6 s cloud cold start. The opt-in sampler adds about 10–20 ms more and has no budget of its own.
 
 ### 2.4 Reuse from Phase 1
 
