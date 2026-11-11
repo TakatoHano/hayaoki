@@ -551,6 +551,49 @@ class HintsTest < Minitest::Test
     refute_includes ids(recs), "cpu_bound_boot"
   end
 
+  # --- sampler names the cause
+
+  def sampler(wall: 6300, r: 1650, d: 0, s: 0, gap: 0, suspend: 0, status: "ok")
+    { "status" => status, "wall_ms" => wall, "r_ms" => r, "d_ms" => d, "s_ms" => s, "gap_ms" => gap, "suspend_ms" => suspend }
+  end
+
+  def sampled(n, runq: 1, **kw)
+    Array.new(n) { |i| split_line(6300 + i * 100, 1600, runq).merge("sampler" => sampler(**kw)) }
+  end
+
+  def test_sampler_d_dominated
+    h = hint(sampled(4, d: 4600), "wait_dominated_boot")
+    assert_match(/uninterruptible sleep \(D\) while off CPU \(99% of it, sampler\), which is file IO or page faults/, h.message)
+    refute_match(/Likely causes/, h.message)
+    assert_match(/Try the other execution environment/, h.message)
+    assert_equal [4, 0.99, 0.0, 0.0], h.evidence.values_at("sampler_lines", "sampler_d_share_p50", "sampler_s_share_p50", "sampler_pause_share_p50")
+  end
+
+  def test_sampler_pause_dominated
+    h = hint(sampled(3, d: 100, gap: 3000, suspend: 1000), "wait_dominated_boot")
+    assert_match(/sampler saw the instance paused for 86% of the time off CPU/, h.message)
+    assert_equal 0.86, h.evidence["sampler_pause_share_p50"]
+  end
+
+  def test_sampler_s_dominated
+    h = hint(sampled(3, s: 3500), "wait_dominated_boot")
+    assert_match(/interruptible sleep \(S\) \(?.*75%.*network calls during boot/, h.message)
+  end
+
+  def test_sampler_mixed_appends_sentence
+    h = hint(sampled(3, d: 1000, s: 1000, gap: 500), "wait_dominated_boot")
+    assert_match(/Likely causes/, h.message)
+    assert_match(/Sampler \(median\): D 22%, S 22%, paused 11% of the time off CPU\./, h.message)
+  end
+
+  def test_sampler_needs_three_ok_lines
+    recs = sampled(2, d: 4600) + [split_line(6300, 1600, 1).merge("sampler" => sampler(d: 4600, status: "late_load"))] +
+           [split_line(6300, 1600, 1)]
+    h = hint(recs, "wait_dominated_boot")
+    refute_match(/uninterruptible|Sampler \(median\)/, h.message)
+    assert_equal [2, nil, nil, nil], h.evidence.values_at("sampler_lines", "sampler_d_share_p50", "sampler_s_share_p50", "sampler_pause_share_p50")
+  end
+
   def test_split_lambda_shape_is_cpu_bound
     recs = [[4950, 4500, 75], [5000, 4550, 110], [4900, 4450, 144], [5050, 4600, 90]].map { split_line(*_1, platform: :lambda, limits: LAMBDA) }
     assert_includes ids(recs), "cpu_bound_boot"

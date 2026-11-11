@@ -407,6 +407,12 @@ False readings to keep in mind:
 
 ---
 
+#### Sampler cause (0.4.5)
+
+Per line that waited with `sampler.status == "ok"`: off = `wall_ms - r_ms`, so the window is load to `initialize_end`; lines with off <= 0 are skipped. Shares are `d_ms / off`, `s_ms / off` and `(gap_ms + suspend_ms) / off`. With 3 or more such lines the medians are in the evidence (`sampler_lines`, `sampler_d_share_p50`, `sampler_s_share_p50`, `sampler_pause_share_p50`; null when not known). For `not_cpu`, `mixed` and `unknown`, the first share at 0.50 or more names the cause, in the order D (file IO or page faults), pause (the platform paused the instance; more CPU is unlikely to help), S (network calls or sleeps). It replaces the generic causes list and wins over the PSI sentence. Below 0.50 the text stays and gets "Sampler (median): D x%, S y%, paused z% of the time off CPU." `wait_kind`, ids and levels do not change.
+
+0.4.4 measurements: Cloud Run gen2 slow lines have R 1.6-2.0 s, D 2.4-5.9 s, S up to 7 ms, no gaps and no suspend; the fast line has R 1.33 s and D 0.27 s. On Lambda R is about the CPU time, D is 155-640 ms and S is about 0, so `cpu_bound_boot` stays.
+
 ## 4. What cannot be seen from inside
 
 | Setting | Visible? | How the wording handles it |
