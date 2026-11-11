@@ -22,18 +22,37 @@ module Hayaoki
     # specs: [[name, full_gem_path], ...]。
     # 戻り値: "<gem:name>" / "<app>" / "<stdlib>" / "<other>"
     def group_for(path, specs, root)
-      p = path.to_s
-      best = nil
+      group_with(path, index(specs, root))
+    end
+
+    # group_for の前処理 (specs と root が同じなら 1 回でよい)。パスごとに作り直すと
+    # specs 数 x パス数の文字列生成と realpath が走る。
+    def index(specs, root)
+      by_dir = {}
       Array(specs).each do |name, dir|
         next if dir.nil? || dir.empty?
-        next unless under?(p, dir)
-        best = [name, dir] if best.nil? || dir.size > best[1].size
+        by_dir[dir.end_with?("/") && dir.size > 1 ? dir.chomp("/") : dir] ||= name # 同じ dir は先勝ち
       end
-      return "<gem:#{best[0]}>" if best
+      [by_dir, app_roots(root).reject { _1 == "/" }, RbConfig::CONFIG["rubylibdir"]]
+    end
+
+    # 祖先ディレクトリを深い方から引くので、最長一致になる (path 自身が dir の場合も一致)。
+    def group_with(path, idx)
+      p = path.to_s
+      by_dir, roots, lib = idx
+      d = p
+      loop do
+        name = by_dir[d] and return "<gem:#{name}>"
+        i = d.rindex("/") or break
+        if i.zero?
+          name = by_dir["/"] and return "<gem:#{name}>"
+          break
+        end
+        d = d[0, i]
+      end
       m = GEM_PATH.match(p)
       return "<gem:#{m[1]}>" if m
-      return "<app>" if app_roots(root).any? { |a| a != "/" && under?(p, a) }
-      lib = RbConfig::CONFIG["rubylibdir"]
+      return "<app>" if roots.any? { under?(p, _1) }
       return "<stdlib>" if lib && under?(p, lib)
       "<other>"
     end

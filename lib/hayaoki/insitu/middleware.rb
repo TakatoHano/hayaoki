@@ -104,8 +104,9 @@ module Hayaoki
         specs = defined?(::Gem) && ::Gem.respond_to?(:loaded_specs) ? ::Gem.loaded_specs.values.map { |s| [s.name, s.full_gem_path] } : []
         root = defined?(::Rails) && ::Rails.respond_to?(:root) ? ::Rails.root&.to_s : nil
         root ||= Dir.pwd
+        idx = Redact.index(specs, root)
         counts = Hash.new(0)
-        paths.each { |p| counts[Redact.group_for(p, specs, root)] += 1 }
+        paths.each { |p| counts[Redact.group_with(p, idx)] += 1 }
         counts.sort_by { |g, n| [-n, g] }.first(TOP_GROUPS)
       end
     end
