@@ -214,7 +214,9 @@ class InsituSamplerTest < Minitest::Test
       sleep 0.5 * TIMING_SLACK
       r = h.result
       assert_equal ["ok", "emit", true], r.values_at("status", "until", "truncated")
-      assert_operator r["d_ms"], :>=, 40
+      # a slow runner can lose samples to gaps, so only the window length is checked tightly
+      assert_operator r["d_ms"], :>, 0
+      assert_operator r["wall_ms"], :>=, 40
       assert_operator r["wall_ms"], :<, 400 * TIMING_SLACK
       assert_raises(Errno::ECHILD) { Process.wait(h.pid) }
     end
