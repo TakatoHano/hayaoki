@@ -162,7 +162,7 @@ for ((i = done_n; i < N; i++)); do
   if [[ $FORCE == 1 ]]; then
     # New revision per sample. The deploy-time startup check may start the instance that serves this
     # request, so first_response can include idle time; ready_ms is still a valid boot sample.
-    "${GC[@]}" run services update "$SERVICE" --region "$REGION" --update-env-vars "HAYAOKI_BENCH_SAMPLE=$((i + 1))" --quiet
+    "${GC[@]}" run services update "$SERVICE" --region "$REGION" --update-env-vars "HAYAOKI_BENCH_SAMPLE=$((i + 1)),HAYAOKI_INSITU_SAMPLER=1" --quiet
     request "$i"
   else
     # Natural: Cloud Run scales an idle instance to zero after about 15 min (not guaranteed).

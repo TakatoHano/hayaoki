@@ -161,7 +161,12 @@ module Hayaoki
             sleep 0.001
           end
           Process.kill("KILL", @pid) unless kill
-          @reaped = waited?
+          # An exec before initialize_end leaves the child unreaped in the new image (documented in §2.2.3)
+          5.times do
+            return @reaped = true if waited?
+            sleep 0.001
+          end
+          @reaped = false
         rescue SystemCallError
           @reaped = true # ECHILD / ESRCH: already gone, or reaped by someone else
         end
@@ -200,9 +205,16 @@ module Hayaoki
           Insitu.sampler_fork = true
           child = Process.fork
           if child.nil?
-            ctl[1].close
-            res[0].close
-            child_main(ctl[0], res[1], stat, interval_ms: interval_ms, max_ms: max_ms) # ends in exit!
+            # sealed: whatever happens here, the child must not fall back into the app's boot
+            begin
+              ctl[1].close
+              res[0].close
+              child_main(ctl[0], res[1], stat, interval_ms: interval_ms, max_ms: max_ms) # ends in exit!
+            rescue Exception # rubocop:disable Lint/RescueException
+              nil
+            ensure
+              exit!(0)
+            end
           end
           keep = [ctl[1], res[0]]
           Handle.new(child, *keep, interval_ms: interval_ms, fork_us: mono_us - t0, timeout: timeout)
