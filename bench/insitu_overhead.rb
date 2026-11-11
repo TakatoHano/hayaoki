@@ -22,7 +22,7 @@ REQ_BUDGET_NS = 100 # docs/design/phase2.md §2.3: 最初の後のリクエス�
 CLEAN_ENV = {
   "RUBYOPT" => nil, "RUBYLIB" => nil, "BUNDLE_GEMFILE" => nil, "BUNDLE_BIN_PATH" => nil,
   "BUNDLER_SETUP" => nil, "BUNDLER_VERSION" => nil, "HAYAOKI_PROBE_OUT" => nil, "HAYAOKI_SPAWN_AT" => nil,
-  "HAYAOKI_INSITU_OUT" => nil, "K_SERVICE" => nil, "AWS_LAMBDA_FUNCTION_NAME" => nil,
+  "HAYAOKI_INSITU_OUT" => nil, "HAYAOKI_INSITU_SAMPLER" => nil, "K_SERVICE" => nil, "AWS_LAMBDA_FUNCTION_NAME" => nil,
 }.freeze
 
 # 子プロセス (リクエスト計測): boot 後に最初の 1 回を送り、続けて N 回の平均 ns を出す
@@ -59,6 +59,7 @@ end
 def env_for(variant, out)
   e = CLEAN_ENV.merge("RAILS_ENV" => "production", "HAYAOKI_INSITU" => variant == :b ? "1" : "0")
   e["HAYAOKI_INSITU_OUT"] = out if variant == :b
+  e["HAYAOKI_INSITU_SAMPLER"] = "1" if variant == :b && $sampler
   e
 end
 
@@ -97,6 +98,7 @@ OptionParser.new do |o|
   o.on("--runs N", Integer, "A/B pairs (default 15)") { opts[:runs] = _1 }
   o.on("--requests N", Integer, "requests per child for the per-request measurement (default 10000)") { opts[:requests] = _1 }
   o.on("--json", "print JSON instead of the table") { opts[:json] = true }
+  o.on("--sampler", "B also sets HAYAOKI_INSITU_SAMPLER=1 (Linux)") { $sampler = true }
 end.parse!
 
 dir = prepare_app
@@ -125,7 +127,7 @@ delta_req = (req_b["median"] - req_a["median"]).round(1)
 require_relative "../lib/hayaoki/insitu/middleware"
 micro = lambda do
   app = ->(_env) { [200, {}, []] }
-  state = Struct.new(:fork_gen, :ignore_paths).new(0, ["/up"])
+  state = Struct.new(:fork_gen, :ignore_paths, :emit_at).new(0, ["/up"], "first_response")
   mw = Hayaoki::Insitu::Middleware.new(app, state)
   mw.instance_variable_set(:@done_gen, 0) # 最初のリクエストの後の素通し状態
   env = { "PATH_INFO" => "/" }
