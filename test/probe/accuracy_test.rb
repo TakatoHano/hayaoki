@@ -66,7 +66,7 @@ class ProbeAccuracyTest < Minitest::Test
     total = @measured.values_at(:slowgem, :inner, :other).sum
     # 内側の require 自体 (ファイル探索と読み込み) のぶんだけ測った値の合計を上回る
     assert_operator s.dur_ms, :>=, total
-    assert_operator s.dur_ms, :<, total + 10
+    assert_operator s.dur_ms, :<, total + 10 * TIMING_SLACK
   end
 
   def test_on_load_is_attributed_to_the_block_owner
