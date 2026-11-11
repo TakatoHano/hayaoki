@@ -91,7 +91,8 @@ module Hayaoki
       def start_sampler(env, linux: RUBY_PLATFORM.include?("linux"))
         return unless linux && sampler_enabled?(env)
         require_relative "sampler"
-        @state.sampler = Sampler.start
+        # Loaded by Bundler.require or later, other gems' fork hooks (APM, ForkTracker) would run in the child
+        @state.sampler = @state.entry == "boot_rb" ? Sampler.start : Sampler::Handle.failed("late_load")
       rescue StandardError, LoadError => e
         warn_once("sampler", e)
       end
