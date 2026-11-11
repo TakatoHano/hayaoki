@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Generates the minimal Rails app the same way .github/workflows/templates.yml does, but with
-# hayaoki 0.4.3 from rubygems instead of a vendored copy. Usage: gen_minimal.sh OUTDIR
+# hayaoki 0.4.4 from rubygems instead of a vendored copy. Usage: gen_minimal.sh OUTDIR
 set -euo pipefail
 OUT="${1:?usage: gen_minimal.sh OUTDIR}"
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 RAILS_VERSION="${RAILS_VERSION:-8.0.2}"
-HAYAOKI_VERSION="${HAYAOKI_VERSION:-0.4.3}"
+HAYAOKI_VERSION="${HAYAOKI_VERSION:-0.4.4}"
 mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 
 script='
