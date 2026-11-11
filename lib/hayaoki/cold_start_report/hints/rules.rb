@@ -343,10 +343,20 @@ module Hayaoki
         next if n < MIN_N || bad.size * 2 < n
         pre = bad.filter_map { |r| r.dig("start_rejected", "pre_load_ms") || r.dig("phases_ms", "pre_load") }.grep(Numeric).select(&:positive?)
         p50 = median(pre)
+        # A rejected start has no pre_load and is timed from load in the plain rows; an out-of-range
+        # pre_load is left out of the plain rows and counted in the "(from load)" rows (Stats).
+        rejected = bad.count { |r| r["start_rejected"] }
+        where = if rejected == bad.size
+                  "For these lines the \"ready\" and \"first response\" rows are already timed from load"
+                elsif rejected.zero?
+                  "Read the \"(from load)\" rows"
+                else
+                  "Lines with a rejected start are timed from load in the \"ready\" and \"first response\" rows, the others in the \"(from load)\" rows"
+                end
         { level: "note", n: n, evidence: { "rejected" => bad.size, "pre_load_ms_p50" => p50 },
           message: "In #{bad.size} of #{n} lines the process started long before hayaoki loaded#{" (pre_load #{duration(p50)})" if p50}. " \
                    "The platform probably started the process ahead of the request and froze or throttled it (Cloud Run gen2 does this). " \
-                   "Read the \"(from load)\" rows; the time before load is not user-visible boot.",
+                   "#{where}; the time before load is not user-visible boot.",
           cannot_see: %w[cpu_allocation] }
       end
     end
