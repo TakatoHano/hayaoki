@@ -161,19 +161,28 @@ module Hayaoki
         }
       end
 
-      # The *_at_load_ms values are nil in a forked child: its CPU clock and its schedstat counters
-      # restart at fork, so the load-time reading belongs to another process.
+      # The *_at_load values are nil in a forked child: its CPU clock and its schedstat, fault and IO
+      # counters restart at fork, so the load-time reading belongs to another process. (Steal and PSI
+      # are system-wide, but the span from the master's load to a worker's emit is not a boot.)
       def proc_facts(state, features, tck)
         child = state.marks.key?(:forked)
-        {
+        h = {
           "cpu_ms" => ms(Clock.cpu_ms), "cpu_at_load_ms" => child ? nil : ms(state.cpu_marks[:loaded]), "rss_kb" => ProcFS.rss_kb, "uptime_ms" => ProcFS.uptime_ms,
           "pid1_age_ms" => ProcFS.pid1_age_ms(clk_tck: tck),
           # main thread only (/proc/self/schedstat is the thread-group leader's counter; see resource-hints.md §2.2)
           "main_thread_runq_wait_ms" => ms(ProcFS.runq_wait_ms),
           "main_thread_runq_wait_at_load_ms" => child ? nil : ms(state.load_runq_wait_ms),
+        }
+        # majflt, io_read_bytes, io_rchar, steal_ms, psi_io_some_ms, psi_cpu_some_ms and their
+        # *_at_load twins (resource-hints.md §2.2.2); steal and PSI are system-wide
+        Insitu.wait_counters.then { |wc| ProcFS::WAIT_KEYS.to_h { [_1, wc[_1]] } }.each do |k, v|
+          h[k] = ms(v)
+          h[k.end_with?("_ms") ? k.sub(/_ms\z/, "_at_load_ms") : "#{k}_at_load"] = child ? nil : ms(state.load_wait[k])
+        end
+        h.merge!(
           "gc_count" => GC.count, "gc_time_ms" => Insitu.gc_time_ms, "features" => features,
           "i18n_loaded" => state.i18n_loaded.nil? ? Insitu.i18n_loaded? : state.i18n_loaded,
-        }
+        )
       end
 
       def rails_version

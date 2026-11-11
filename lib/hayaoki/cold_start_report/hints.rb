@@ -96,6 +96,25 @@ module Hayaoki
           d >= 0 ? d : nil
         end
 
+        # Time off CPU from load to first response (ms): wall - process CPU over the same span. nil
+        # without cpu_at_load_ms (the span would not match the *_at_load counters) or when not positive.
+        def non_cpu_ms(r)
+          s = share(r)
+          return nil unless s && s[:from_load]
+          d = s[:wall_ms] - s[:cpu_ms]
+          d.positive? ? d : nil
+        end
+
+        # emit - load for one of the proc counters read at both points (majflt, io_read_bytes, steal_ms,
+        # psi_io_some_ms, ...); nil when either reading is missing or the counter went backwards.
+        def proc_delta(r, key)
+          at_emit = num(r.dig("proc", key))
+          at_load = num(r.dig("proc", key.end_with?("_ms") ? key.sub(/_ms\z/, "_at_load_ms") : "#{key}_at_load"))
+          return nil unless at_emit && at_load
+          d = at_emit - at_load
+          d >= 0 ? d : nil
+        end
+
         # median limits.cpu_quota over the set; nil when no line has one (Lambda: no cgroup files, and
         # no nominal memory/1769 estimate, see §9 Q2 revised)
         def quota(set = cpu_set)
@@ -143,6 +162,9 @@ module Hayaoki
         def median(values) = values.empty? ? nil : Stats.percentile(values, 50)
 
         def sec(ms) = format("%.1f", ms / 1000.0)
+
+        # "850 ms" below one second, "4.8 s" from there
+        def span_text(ms) = ms < 1000 ? "#{ms.round} ms" : "#{sec(ms)} s"
 
         # pre_load can be minutes to days; show it in the largest fitting unit
         def duration(ms)

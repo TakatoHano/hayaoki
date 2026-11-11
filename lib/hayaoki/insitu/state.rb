@@ -42,6 +42,13 @@ module Hayaoki
         nil
       end
 
+      # Counters behind non-CPU time (major faults, IO bytes, steal, PSI); {} when unavailable
+      def wait_counters
+        ProcFS.wait_counters(clk_tck: Clock.clk_tck)
+      rescue StandardError
+        {}
+      end
+
       # Load-time part of the "limits" object (cgroup, cpu_quota, nproc, sandbox); {} on failure
       def read_limits
         require_relative "limits"
@@ -64,7 +71,7 @@ module Hayaoki
       MARKS = %i[loaded bundler_require_start bundler_require_end initialize_start initialize_end
                  first_probe first_request_start first_response_end forked].freeze
 
-      attr_reader :id, :load_pid, :load_ms, :start_ms, :entry, :marks, :cpu_marks, :load_runq_wait_ms, :limits, :eager_by, :out, :emit_mode,
+      attr_reader :id, :load_pid, :load_ms, :start_ms, :entry, :marks, :cpu_marks, :load_runq_wait_ms, :load_wait, :limits, :eager_by, :out, :emit_mode,
                   :emit_at, :probe_hits, :fork_gen
       attr_accessor :boot_error, :i18n_loaded, :first_request, :bootsnap_cache, :eager_ms, :server
 
@@ -72,13 +79,16 @@ module Hayaoki
       # keeps the start of the process that booted the app (preload_app!). :auto reads /proc.
       # `load_runq_wait_ms`: main-thread run-queue wait at load (one /proc read); the emitter reads it
       # again at emit, so the difference covers load -> emit for the thread that boots the app.
+      # `load_wait`: ProcFS.wait_counters at load (five small /proc reads), read again at emit likewise.
       def initialize(env: ENV, entry: "boot_rb", load_ms: Clock.now_ms, pid: Process.pid, id: nil, bootsnap_cache: nil,
-                     start_ms: :auto, load_cpu_ms: Insitu.cpu_ms, load_runq_wait_ms: Insitu.main_thread_runq_wait_ms, limits: :auto)
+                     start_ms: :auto, load_cpu_ms: Insitu.cpu_ms, load_runq_wait_ms: Insitu.main_thread_runq_wait_ms, load_wait: Insitu.wait_counters,
+                     limits: :auto)
         @id = id || Random.urandom(4).unpack1("H*")
         @load_pid = pid
         @load_ms = load_ms
         @start_ms = start_ms == :auto ? Clock.process_start_ms : start_ms
         @load_runq_wait_ms = load_runq_wait_ms
+        @load_wait = load_wait || {}
         # nil until initialize! snapshots Insitu.server_process? (false in rake / console / job workers)
         @server = nil
         @entry = entry
