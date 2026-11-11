@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- `prestarted_process` pointed to the "(from load)" rows also for lines with a rejected start, where those rows print `-`. It now says that the "ready" and "first response" rows are already timed from load for such lines, and points to the "(from load)" rows only for lines with an out-of-range `pre_load`.
+
 ## [0.4.5] - 2026-11-11
 
 ### Changed

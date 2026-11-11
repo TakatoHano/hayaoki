@@ -115,6 +115,10 @@ class HintsTest < Minitest::Test
     h = hint(lines(3, rejected: true) + lines(3), "prestarted_process")
     assert_equal ["note", 6, 3], [h.level, h.n, h.evidence["rejected"]]
     assert_match(/In 3 of 6 lines .* \(pre_load 60 min\)/, h.message)
+    assert_includes h.message, 'the "ready" and "first response" rows are already timed from load'
+    assert_includes hint(lines(3, pre_load: 7_200_000), "prestarted_process").message, 'Read the "(from load)" rows'
+    mixed = hint(lines(2, rejected: true) + lines(2, pre_load: 7_200_000), "prestarted_process").message
+    assert_includes mixed, 'rejected start are timed from load in the "ready" and "first response" rows, the others in the "(from load)" rows'
     refute_includes ids(lines(2, rejected: true) + lines(3)), "prestarted_process"
     assert_includes ids(lines(3, pre_load: 7_200_000)), "prestarted_process"
     refute_includes ids(lines(2, rejected: true)), "prestarted_process"
