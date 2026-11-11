@@ -557,16 +557,31 @@ class HintsTest < Minitest::Test
     refute_includes ids(recs), "wait_dominated_boot"
   end
 
-  # gVisor: the run-queue fields are null, so the kind is unknown and the 0.4.2 wording stays; counters still show
+  # gVisor: the run-queue fields are null, so the kind is unknown and the 0.4.2 wording stays. majflt,
+  # io_read_bytes and steal are left out (gVisor reports 0 for them); PSI would still show
   def test_split_gvisor_without_runq_is_unknown
     c = { "majflt" => 10, "majflt_at_load" => 4, "psi_io_some_ms" => 900, "psi_io_some_at_load_ms" => 100 }
     recs = Array.new(4) { split_line(6400, 1600, nil, limits: cr(quota: 2, sandbox: "gvisor"), counters: c) }
     h = hint(recs, "wait_dominated_boot")
     assert_equal "unknown", h.evidence["wait_kind"]
     assert_match(/More CPU is unlikely to help\. Likely causes: file IO .*or CPU throttled before the first request\./, h.message)
-    assert_match(/6 major page faults, system-wide IO stall \(PSI\) 800 ms/, h.message)
+    assert_match(/Over the same span \(median\): system-wide IO stall \(PSI\) 800 ms\./, h.message)
+    refute_match(/major page faults/, h.message)
     assert_match(/gVisor system-call work/, h.message)
-    assert_equal [6, 800], h.evidence.values_at("majflt_p50", "psi_io_some_ms_p50")
+    assert_equal [nil, 800], h.evidence.values_at("majflt_p50", "psi_io_some_ms_p50")
+  end
+
+  # As 0.4.3 lines from Cloud Run gen1 look: majflt, read_bytes and steal stay 0, PSI and runq are null
+  def test_gvisor_zero_counters_are_not_shown
+    c = { "majflt" => 0, "majflt_at_load" => 0, "io_read_bytes" => 0, "io_read_bytes_at_load" => 0,
+          "steal_ms" => 0, "steal_at_load_ms" => 0 }
+    recs = Array.new(4) { split_line(7300, 1800, nil, limits: cr(quota: 2, sandbox: "gvisor"), counters: c) }
+    h = hint(recs, "wait_dominated_boot")
+    refute_match(/Over the same span|major page faults/, h.message)
+    assert_equal [nil, nil, nil], h.evidence.values_at("majflt_p50", "io_read_bytes_p50", "steal_ms_p50")
+    # the same zeros outside gVisor are real readings
+    recs = Array.new(4) { split_line(7300, 1800, nil, limits: cr(quota: 2, sandbox: nil), counters: c) }
+    assert_match(/Over the same span \(median\): 0 major page faults\./, hint(recs, "wait_dominated_boot").message)
   end
 
   # proc_delta: nil when either reading is missing or the counter went backwards (reset, wrap)

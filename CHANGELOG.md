@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- `wait_dominated_boot` no longer shows `majflt`, `io_read_bytes` and steal on gVisor (Cloud Run gen1), where they are always 0.
+
 ## [0.4.3] - 2026-11-11
 
 ### Added
