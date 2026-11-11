@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- `wait_dominated_boot` uses the `sampler` object to name the cause: when D, S or paused time is half or more of the time off CPU, the text says file IO or page faults, network or sleep, or a paused instance. Below that it adds the medians. New evidence keys `sampler_lines`, `sampler_d_share_p50`, `sampler_s_share_p50`, `sampler_pause_share_p50`.
+
 ## [0.4.4] - 2026-11-11
 
 ### Added

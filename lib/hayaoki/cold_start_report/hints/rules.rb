@@ -10,6 +10,7 @@ module Hayaoki
       # wait_dominated_boot split (resource-hints.md §3.2): median over the lines that waited of
       # main-thread run-queue wait / time off CPU.
       RUNQ_CPU_WAIT = 0.50  # at or above: the wait was mostly for a CPU
+      SAMPLER_CAUSE = 0.50  # sampler share of the time off CPU at or above: it names the cause
       RUNQ_NOT_CPU = 0.20   # at or below: the wait was not for a CPU
       WAIT_MAIN_CAUSE = 0.50 # PSI io stall (or steal) / time off CPU at or above: named as the likely main cause
       MEM_P50 = 0.80        # median rss / limit
@@ -127,6 +128,7 @@ module Hayaoki
           next if c.busy(c.share(r)[:share], s[:quota]) > WAIT_BUSY
           h = { non_cpu: non, runq: c.main_thread_runq_wait_ms(r) }
           WAIT_COUNTERS.each { |k| h[k] = c.proc_delta(r, k) }
+          h[:sampler] = sampler_shares(r["sampler"])
           h
         end
         med = ->(set, &f) { median(set.filter_map(&f)) }
@@ -144,14 +146,49 @@ module Hayaoki
         # VM or sandbox (Lambda, Cloud Run)
         out[:single_tenant] = c.lambda? || s[:set].count { _1.dig("platform", "kind") == "cloud_run" } * 2 >= s[:set].size
         out[:unaccounted] = med.(rq) { |h| h["psi_io_some_ms"] && h["steal_ms"] && [h[:non_cpu] - h[:runq] - h["psi_io_some_ms"] - h["steal_ms"], 0].max }
+        sm = rows.filter_map { _1[:sampler] }
+        out[:sampler_lines] = sm.size
+        if sm.size >= MIN_N
+          %i[d s pause].each { |k| out[:"sampler_#{k}"] = median(sm.map { _1[k] }) }
+        end
         return out if rq.size < MIN_N
         share = median(rq.map { [_1[:runq].to_f / _1[:non_cpu], 1.0].min })
         out.merge(runq: median(rq.map { _1[:runq] }), runq_non_cpu: median(rq.map { _1[:non_cpu] }), runq_share: share,
                   kind: share >= RUNQ_CPU_WAIT ? "cpu" : (share <= RUNQ_NOT_CPU ? "not_cpu" : "mixed"))
       end
 
+      # Shares of the main thread's time off CPU (wall - R) by the sampler (resource-hints.md §2.2.3),
+      # or nil when the line has no usable sampler object.
+      def self.sampler_shares(sm)
+        return unless sm.is_a?(Hash) && sm["status"] == "ok"
+        wall, r, d, s = %w[wall_ms r_ms d_ms s_ms].map { sm[_1] }
+        return unless [wall, r, d, s].all?(Numeric)
+        off = wall - r
+        return unless off.positive?
+        { d: d.to_f / off, s: s.to_f / off, pause: (sm["gap_ms"].to_f + sm["suspend_ms"].to_f) / off }
+      end
+
+      # The sentence that names the cause from the sampler, or nil. The first share at or above
+      # SAMPLER_CAUSE wins, in the order D, pause, S.
+      def self.sampler_cause_text(w)
+        return unless w[:sampler_d]
+        pc = ->(v) { (v * 100).round }
+        if w[:sampler_d] >= SAMPLER_CAUSE
+          " The main thread was mostly in uninterruptible sleep (D) while off CPU (#{pc.(w[:sampler_d])}% of it, sampler), " \
+            "which is file IO or page faults: no bootsnap cache, many small files, lazily pulled image layers."
+        elsif w[:sampler_pause] >= SAMPLER_CAUSE
+          " The sampler saw the instance paused for #{pc.(w[:sampler_pause])}% of the time off CPU: the platform likely paused the instance, " \
+            "and more CPU is unlikely to help."
+        elsif w[:sampler_s] >= SAMPLER_CAUSE
+          " The main thread was mostly in interruptible sleep (S) while off CPU (#{pc.(w[:sampler_s])}% of it, sampler): " \
+            "network calls during boot (DB, secrets, HTTP in initializers) or sleeps."
+        end
+      end
+
       def self.wait_evidence(w)
-        { "wait_kind" => w[:kind] || "unknown", "wait_lines" => w[:lines], "non_cpu_ms_p50" => Stats.rnd(w[:non_cpu]),
+        { "sampler_lines" => w[:sampler_lines], "sampler_d_share_p50" => w[:sampler_d]&.round(2),
+          "sampler_s_share_p50" => w[:sampler_s]&.round(2), "sampler_pause_share_p50" => w[:sampler_pause]&.round(2),
+          "wait_kind" => w[:kind] || "unknown", "wait_lines" => w[:lines], "non_cpu_ms_p50" => Stats.rnd(w[:non_cpu]),
           "runq_share_of_non_cpu_p50" => w[:runq_share]&.round(2),
           "majflt_p50" => w["majflt"], "io_read_bytes_p50" => w["io_read_bytes"], "steal_ms_p50" => Stats.rnd(w["steal_ms"]),
           "psi_io_some_ms_p50" => Stats.rnd(w["psi_io_some_ms"]), "psi_cpu_some_ms_p50" => Stats.rnd(w["psi_cpu_some_ms"]),
@@ -188,6 +225,13 @@ module Hayaoki
               "(median of #{s[:n]}; CPU #{sec(s[:cpu_ms])} s of #{sec(s[:wall_ms])} s)."
         runq = kind && "the main thread waited in the run queue for #{span_text(w[:runq])} of the #{span_text(w[:runq_non_cpu])} off CPU " \
                        "(median of #{w[:runq_lines]} lines that waited)"
+        cause = kind == "cpu" ? nil : sampler_cause_text(w)
+        generic = if w[:sampler_d]
+                    format(" Sampler (median): D %d%%, S %d%%, paused %d%% of the time off CPU.",
+                           (w[:sampler_d] * 100).round, (w[:sampler_s] * 100).round, (w[:sampler_pause] * 100).round)
+                  else
+                    ""
+                  end
         case kind
         when "cpu"
           msg += " Most of the wait was for a CPU: #{runq}. A CPU quota or other work on the same CPUs likely held boot back."
@@ -200,17 +244,22 @@ module Hayaoki
                  end
         when "not_cpu"
           msg += " It was not waiting for a CPU: #{runq}, so throttling by a CPU quota is unlikely and more CPU is unlikely to help."
-          if w[:single_tenant] && w[:io_share] && w[:io_share] >= WAIT_MAIN_CAUSE
+          if cause
+            msg += cause
+          elsif w[:single_tenant] && w[:io_share] && w[:io_share] >= WAIT_MAIN_CAUSE
             msg += " IO stall time (PSI) covers most of the wait, so file IO is the likely main cause (no bootsnap cache, many small files, lazily pulled image layers)."
           elsif w[:single_tenant] && w[:steal_share] && w[:steal_share] >= WAIT_MAIN_CAUSE
             msg += " Steal time covers most of the wait: the host likely did not run the instance's vCPUs for that time, which the app cannot change."
           else
             msg += " Likely causes: #{WAIT_CAUSES}, or the platform pausing the instance."
+            msg += generic
           end
         when "mixed"
-          msg += " Part of the wait was for a CPU: #{runq}. More CPU may recover that part. Other likely causes: #{WAIT_CAUSES}."
+          msg += " Part of the wait was for a CPU: #{runq}. More CPU may recover that part."
+          msg += cause || " Other likely causes: #{WAIT_CAUSES}.#{generic}"
         else
-          msg += " More CPU is unlikely to help. Likely causes: #{WAIT_CAUSES}, or CPU throttled before the first request."
+          msg += " More CPU is unlikely to help."
+          msg += cause || " Likely causes: #{WAIT_CAUSES}, or CPU throttled before the first request.#{generic}"
         end
         msg += wait_counter_text(w)
         if kind && kind != "cpu" && w[:unaccounted]&.positive?
