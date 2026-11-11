@@ -114,6 +114,7 @@ module Hayaoki
       end
 
       WAIT_COUNTERS = %w[majflt io_read_bytes steal_ms psi_io_some_ms psi_cpu_some_ms].freeze
+      GVISOR_ZERO_COUNTERS = %w[majflt io_read_bytes steal_ms].freeze
 
       # What the time off CPU was, over the lines that waited (busy at or under WAIT_BUSY, read from
       # load). :kind is "cpu" / "not_cpu" / "mixed" from the run-queue share, or nil when fewer than
@@ -131,7 +132,9 @@ module Hayaoki
         med = ->(set, &f) { median(set.filter_map(&f)) }
         rq = rows.select { _1[:runq] }
         out = { lines: rows.size, runq_lines: rq.size, non_cpu: med.(rows) { _1[:non_cpu] } }
-        WAIT_COUNTERS.each { |k| out[k] = med.(rows) { _1[k] } }
+        # gVisor reports 0 for these whatever happened (0.4.3 on Cloud Run gen1), so they say nothing there
+        skip = c.gvisor?(s[:set]) ? GVISOR_ZERO_COUNTERS : []
+        (WAIT_COUNTERS - skip).each { |k| out[k] = med.(rows) { _1[k] } }
         out[:io_share] = med.(rows) { |h| h["psi_io_some_ms"] && [h["psi_io_some_ms"].to_f / h[:non_cpu], 1.0].min }
         nproc = median(s[:set].filter_map { |r| c.num(r.dig("limits", "nproc")) })
         out[:nproc] = nproc&.positive? ? nproc : nil

@@ -165,7 +165,7 @@ Per platform (to verify with the first lines that carry the counters; the reader
 
 | | `majflt` | `io_read_bytes` / `io_rchar` | `steal_ms` | PSI |
 |---|---|---|---|---|
-| Cloud Run gen1 (gVisor) | field present; gVisor may report 0 | gVisor implements `/proc/[pid]/io` partially; expect null or zeros | gVisor writes its own `/proc/stat`; expect 0 | not provided: null |
+| Cloud Run gen1 (gVisor) | measured (0.4.3 smoke, 2026-11-11): 0 at load and at emit | measured: `read_bytes` 0, `rchar` real (about 0.7 MB at load, 9.4 MB at emit) | measured: 0 | measured: null |
 | Cloud Run gen2 (microVM) | real Linux kernel: yes | file readable; `read_bytes` probably 0, since the image is not served from a block device the guest reads directly | present; real only if the host passes steal to the guest | depends on the guest kernel config; unknown |
 | Lambda (Firecracker) | yes | file readable; `read_bytes` may be real for the image's block devices | present; same condition | probably missing: null |
 
@@ -291,7 +291,7 @@ Why these values:
 - "The CPU quota is not visible; a quota below 1 vCPU would look like waiting" is only added for `unknown`. With a run-queue reading the quota does not have to be visible.
 - "Try the other execution environment" is left out for `cpu`; the file IO difference between gen1 and gen2 is not the point there.
 
-Supporting numbers. The §2.2.2 counters are medians of emit − load over the lines that waited, each over the lines that have it. They never decide the kind. The text lists the ones present after the causes: "Over the same span (median): {majflt} major page faults, {x} MB read from storage, system-wide IO stall (PSI) {y}, system-wide steal {z} summed over {N} CPUs." `io_read_bytes`, steal and PSI are listed only when above 0 (0 is what overlay and FUSE report for `io_read_bytes` whatever was read). The list is also added to the `unknown` text.
+Supporting numbers. The §2.2.2 counters are medians of emit − load over the lines that waited, each over the lines that have it. They never decide the kind. The text lists the ones present after the causes: "Over the same span (median): {majflt} major page faults, {x} MB read from storage, system-wide IO stall (PSI) {y}, system-wide steal {z} summed over {N} CPUs." `io_read_bytes`, steal and PSI are listed only when above 0 (0 is what overlay and FUSE report for `io_read_bytes` whatever was read). The list is also added to the `unknown` text. On gVisor (`limits.sandbox` is `gvisor` in at least half of the lines) `majflt`, `io_read_bytes` and steal are dropped from the text and the evidence, since gVisor reports 0 for them whatever happened.
 
 Naming a cause. The default is the neutral list of causes. Only in `not_cpu`, and only when the platform is Lambda or Cloud Run (an instance alone on its microVM or sandbox, so system-wide counters are about this boot), one of two sentences replaces it. On other platforms the numbers are shown and the neutral list stays:
 
