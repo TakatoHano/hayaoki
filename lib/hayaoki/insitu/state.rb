@@ -8,6 +8,13 @@ module Hayaoki
 
     class << self
       attr_reader :state
+      # true only while Sampler.start forks its child, so ForkHook does not take it for an app fork
+      attr_accessor :sampler_fork
+
+      # HAYAOKI_INSITU_SAMPLER=1: sample the main thread's state from a forked child (Linux only)
+      def sampler_enabled?(env = ENV)
+        %w[1 true on yes].include?(env["HAYAOKI_INSITU_SAMPLER"].to_s.strip.downcase)
+      end
 
       # One stderr line per process at most; never raises.
       def warn_once(where, error)
@@ -73,7 +80,8 @@ module Hayaoki
 
       attr_reader :id, :load_pid, :load_ms, :start_ms, :entry, :marks, :cpu_marks, :load_runq_wait_ms, :load_wait, :limits, :eager_by, :out, :emit_mode,
                   :emit_at, :probe_hits, :fork_gen
-      attr_accessor :boot_error, :i18n_loaded, :first_request, :bootsnap_cache, :eager_ms, :server
+      # sampler: Sampler::Handle when HAYAOKI_INSITU_SAMPLER is on (Linux), else nil
+      attr_accessor :boot_error, :i18n_loaded, :first_request, :bootsnap_cache, :eager_ms, :server, :sampler
 
       # `start_ms`: process start (P1) on the Clock scale, read once here so a forked worker
       # keeps the start of the process that booted the app (preload_app!). :auto reads /proc.

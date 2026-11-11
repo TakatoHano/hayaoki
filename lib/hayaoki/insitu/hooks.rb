@@ -42,8 +42,11 @@ module Hayaoki
       # parent and child. Parent: remember that it has children. Child: stamp the fork time.
       module ForkHook
         def _fork
-          pid = super
+          return super if Hayaoki::Insitu.sampler_fork
           st = Hayaoki::Insitu.state
+          # before the fork, so no child inherits the sampler's pipes; a forked worker has no sampler data
+          st&.sampler&.abort("forked")
+          pid = super
           if st
             pid.zero? ? st.forked_in_child! : st.forked_parent!
           end
@@ -75,12 +78,22 @@ module Hayaoki
       def start!(env: ENV, load_ms: Clock.now_ms)
         @program = program_name
         @state = State.new(env: env, entry: detect_entry, load_ms: load_ms, bootsnap_cache: bootsnap_cache_before_setup(env))
+        start_sampler(env)
         ::Bundler::Runtime.prepend(Hooks::BundlerHook) if defined?(::Bundler::Runtime)
         install_rails_hooks if defined?(::Rails::Application)
         ::Process.singleton_class.prepend(Hooks::ForkHook) if ::Process.respond_to?(:_fork)
         at_exit { at_exit! }
       rescue StandardError => e
         warn_once("start", e)
+      end
+
+      # Opt-in and Linux only (resource-hints.md §2.2.3). The file is not even loaded otherwise.
+      def start_sampler(env, linux: RUBY_PLATFORM.include?("linux"))
+        return unless linux && sampler_enabled?(env)
+        require_relative "sampler"
+        @state.sampler = Sampler.start
+      rescue StandardError, LoadError => e
+        warn_once("sampler", e)
       end
 
       # "boot_rb": loaded before Bundler.require (the intended place). "bundler": loaded by
@@ -144,6 +157,8 @@ module Hayaoki
       def after_initialize
         st = @state or return
         st.mark(:initialize_end)
+        # boot is over: the main thread only sleeps from here on, so the sampler's window ends
+        st.sampler&.result("initialize_end")
         return unless st.emit_mode == "ready"
         return unless st.server != false && server_process?
         st.i18n_loaded = i18n_loaded?
@@ -202,6 +217,9 @@ module Hayaoki
         Emitter.emit(st, status)
       rescue StandardError => e
         warn_once("at_exit", e)
+      ensure
+        # no line was written (rake, console, a master with workers): still end and reap the child
+        st&.sampler&.abort
       end
     end
   end

@@ -13,7 +13,7 @@ A hint is never a certain claim. It names the numbers it used, how many lines it
 | # | Decision |
 |---|---|
 | H1 | Hints are computed by `cold-start-report` only. Insitu does not judge anything; it only records a few more facts. |
-| H2 | The line schema stays `v: 1`. New keys are additive: a `limits` object, `proc.cpu_at_load_ms`, `phases_cpu_ms`, and later the run-queue wait (§2.2.1) and the counters of §2.2.2. Old lines still work; rules that need a new key skip with a note. |
+| H2 | The line schema stays `v: 1`. New keys are additive: a `limits` object, `proc.cpu_at_load_ms`, `phases_cpu_ms`, and later the run-queue wait (§2.2.1), the counters of §2.2.2 and the opt-in `sampler` object (§2.2.3). Old lines still work; rules that need a new key skip with a note. |
 | H3 | The main signal is the **CPU share**: process CPU time / wall time over the same span. High share = CPU-bound; low share = waiting. It is normalized by the CPU quota when the quota is known. |
 | H4 | Every rule needs at least 3 `ok` lines with a plausible start (except the Lambda timeout rule) and uses medians, not single lines. Resource rules only fire when `ready` p50 is at least 3 s. |
 | H5 | Two levels: `likely` (strong signal, the suggested change has a clear effect) and `possible` (signal present, but the fix depends on a setting we cannot see). Plus `note` for facts that change how to read the report. |
@@ -82,6 +82,24 @@ Two cells were measured again with the run-queue fields of §2.2.1 (6 natural co
 - **Both platforms expose `/proc/self/schedstat` with real values.** gen2 (`cpu_quota` 2.09 at load) and Lambda both report a counter that moves. Cloud Run gen1 lines of 0.4.1 carry null in both fields: gVisor does not provide the file.
 - **gen2 does not wait for a CPU.** The slow lines are off CPU for about 4.8 s and the main thread spent 1–2 ms of that in the run queue. A CPU quota that throttles the process would show up in this counter, so the earlier guess "CPU throttled before the first request" does not hold for this cell. The CPU time is the same in fast and slow lines (1.3–1.7 s); the slow lines stretch `pre_bundler`, `app_config` and `initialize`, the phases that mostly `require` files. What is left is file IO, or the host not running the VM (which the guest's run queue cannot see; §2.2.2).
 - **Lambda waits a little, and partly for a CPU.** About 450 ms off CPU per boot, of which 75–144 ms in the run queue. `cpu_bound_boot` fires there, so the split of §3.2 is not applied. The 0.21 median shows that an ordinary CPU-bound boot can have a fifth of its small off-CPU time in the run queue; the "not waiting for a CPU" threshold sits at that value, not above it.
+
+### 1.3 Counters in 0.4.3 lines (2026-11-11)
+
+The same cells again with the counters of §2.2.2 (natural cold starts, `ok` lines only). Counters are emit − load.
+
+| Cell | Lines | Load to first response | CPU share from load | Off CPU | Run queue | `majflt` | `io_read_bytes` | `io_rchar` | Steal | PSI |
+|---|---|---|---|---|---|---|---|---|---|---|
+| CR gen2 minimal, slow lines | 4 | 6.3–6.8 s | 0.24–0.31 | 4.6–5.0 s | 0–4 ms | 126 | 30.4 MB | 8.4 MB | 0 | null |
+| CR gen2 minimal, fast lines | 2 | 2.1–2.4 s | 0.79–0.80 | 0.43–0.47 s | 1 ms | 126 | 30.4 MB | 8.4 MB | 0 | null |
+| Lambda Redmine 1024 | 6 | 4.3–6.2 s | 0.82–0.91 | 0.46–1.1 s | 85–154 ms | 2811–2812 | 39.2 MB | 21.8 MB | 10–50 ms (2 CPUs) | null |
+| CR gen1 minimal (gVisor) | 2 | 6.2–6.8 s (2.5 s of it idle before the first request) | 0.29–0.32 | 4.4–4.7 s | null | 0 | 0 | 8.4 MB | 0 | null |
+
+- **gen2 is bimodal again, and the counters are the same in both modes.** Fast and slow lines have the same 126 major faults, the same 30.4 MB read from storage and the same 8.4 MB passed to read calls. The slow lines add 4.2–4.6 s off CPU in the phases that mostly `require` files (`pre_bundler` 0.8 s → 2.3–3.1 s). So the slow boots did the same amount of IO. Either each IO took longer (a cold image cache on the host side: about 37 ms per major fault instead of about 3 ms, if the faults carry all of it), or the instance did not run for part of the time. The counters are sizes and cannot tell these apart.
+- **PSI is missing on every cell** (the files do not exist), so the PSI sentence of §3.2 and the remainder (`unaccounted_ms_p50`) never apply on these platforms.
+- **Steal is real on Lambda** (10–50 ms over 2 CPUs) and 0 on gen2. A 0 on gen2 does not show that the host ran the VM all the time; the host may not report steal to the guest.
+- **gVisor reports 0** for `majflt`, `io_read_bytes` and steal, and has no run-queue file (already handled in §3.2).
+
+What is missing is a time, per thread, split by what the thread was doing. That is §2.2.3.
 
 ---
 
@@ -171,8 +189,8 @@ Per platform (to verify with the first lines that carry the counters; the reader
 
 Two things these counters cannot show:
 
-- **A VM that is not run.** When the host stops running the VM's vCPUs, a task inside is "running" as far as the guest scheduler knows, so `schedstat` does not count the time as run-queue wait. If the host reports steal, it lands in `steal_ms`. A full pause (the guest clock stops, or the freezer holds the process) is in no counter. It stays the remainder: off CPU − run queue − IO stall − steal.
-- **Network wait.** A blocking connect or read during boot is plain sleep. It is also in the remainder.
+- **A VM that is not run.** When the host stops running the VM's vCPUs, a task inside is "running" as far as the guest scheduler knows, so `schedstat` does not count the time as run-queue wait. If the host reports steal, it lands in `steal_ms`. A full pause (the guest clock stops, or the freezer holds the process) is in no counter. It stays the remainder: off CPU − run queue − IO stall − steal. The opt-in sampler of §2.2.3 measures it as a gap.
+- **Network wait.** A blocking connect or read during boot is plain sleep. It is also in the remainder. The sampler of §2.2.3 counts it as `s_ms`.
 
 Forked child: `majflt` and `/proc/self/io` restart at fork like the CPU clock, so their `*_at_load` values are null there. Steal and PSI are system-wide, but the span from the master's load to a worker's emit is not a boot, so their `*_at_load` values are null in a child too: one rule for every `*_at_load` field.
 
@@ -181,6 +199,81 @@ Skipped: `delayacct_blkio_ticks` (field 42 of `/proc/self/stat`), which would be
 Privacy: only numbers and fixed tokens (`v1`/`v2`/`gvisor`). No paths, no kernel version string, no hostnames, no env values. `phases_cpu_ms` is process CPU time, which says nothing about requests or users.
 
 Not added: per-thread CPU, `/proc/pressure/memory` (the IO and CPU files were added in §2.2.2, read at load and at emit only), `delayacct_blkio_ticks` (§2.2.2), `memory.peak` (newer kernels only; candidate for later), other env flags. The one exception is `platform.lwa_async_init` (Lambda only, boolean, true only when the value is `"true"`; the value is never logged; Q3).
+
+#### 2.2.3 Main-thread state sampler (opt-in, 2026-11-11)
+
+§1.3 leaves one question the counters cannot answer: during the time off CPU, was the main thread blocked on IO, sleeping, or was the whole instance not running? `HAYAOKI_INSITU_SAMPLER=1` turns on a sampler that answers it with times. It is off by default and Linux only; elsewhere the `sampler` key of the line is null.
+
+```json
+"sampler": {"status": "ok", "until": "initialize_end", "interval_ms": 10, "wall_ms": 5210, "samples": 498,
+            "r_ms": 1540, "d_ms": 3400, "s_ms": 120, "other_ms": 0,
+            "gaps": 2, "gap_ms": 150, "gap_max_ms": 90, "truncated": false, "suspend_ms": 0,
+            "sampler_cpu_ms": 28, "sampler_runq_wait_ms": 3, "sampler_majflt": 0, "fork_us": 800, "collect_us": 400}
+```
+
+**Method.** At load, right after the at-load counters are read, the process forks one child. Every 10 ms the child reads field 3 (state) of `/proc/<parent pid>/task/<parent pid>/stat`, the stat file of the parent's main thread (the thread-group leader, whose tid is the pid), and adds the time since its previous sample to the state it sees:
+
+| Field | State | What it means for boot |
+|---|---|---|
+| `r_ms` | `R` | running or runnable. On-CPU time and run-queue wait together; the run-queue part is `proc.main_thread_runq_wait_ms` |
+| `d_ms` | `D` | uninterruptible sleep: waiting for a page fault or a file read to be served (block device, FUSE and virtiofs requests included), or for a kernel lock |
+| `s_ms` | `S` | interruptible sleep: a socket (DB, HTTP, DNS), `sleep`, a pipe, or a futex, which is also how the main thread waits for another Ruby thread or for the GVL |
+| `other_ms` | anything else | stopped, traced, or a read that failed |
+
+A step between two samples longer than 5 intervals (50 ms) is a **gap**: the child did not run. One interval of it goes to the state, the rest to `gap_ms`; `gaps` counts them and `gap_max_ms` is the longest. So `r_ms + d_ms + s_ms + other_ms + gap_ms = wall_ms`. A sample that is late by less than that is not lost: its whole step goes to the state seen.
+
+The window ends at `initialize_end` (`"until": "initialize_end"`). After boot the main thread of a Puma process sleeps while server threads work, so later samples would add `S` time that is not boot. Without `initialize!` (not a Rails app, or a boot error) it ends when the line is built (`"until": "emit"`). The child is gone after that.
+
+**Why not a Ruby thread.** A sampler thread in the same process needs the GVL to run. The main thread holds the GVL while it runs Ruby code, and it keeps holding it while it is blocked in the kernel in most of the places a cold boot waits: a major page fault on the Ruby binary, a shared library or bootsnap's cache, the `stat`/`open` calls of the `$LOAD_PATH` search, `dlopen` of an extension, a `read` done by C code that does not release the lock. Ruby's timer thread only asks the running thread to give up the GVL; a thread stuck in a page fault cannot answer. So a thread sampler would stop exactly when the main thread is in `D`, and that time would show up as a gap, the same as a paused instance. Pure Ruby has no thread that runs without the GVL. A Ractor has its own lock, but it prints an "experimental" warning, switches the VM into multi-Ractor mode for the rest of the process, and still stops with the main Ractor at every GC. A C extension could start a native thread, but the gem is pure Ruby (no `extensions` in the gemspec) and stays that way.
+
+**Why fork and not spawn.** A forked child has its own GVL and is sampling within a millisecond. `Process.spawn` of a new `ruby` (or of `/bin/sh` with a loop) avoids copying the parent, but the new interpreter needs tens of ms of CPU before its first sample, it has to be found and started with a clean environment (`RUBYOPT`, shims), and a shell loop has no clock or sleep finer than what the image happens to ship. The cost of fork is the copy-on-write faults listed under Overhead.
+
+**What a pause looks like.** The child is a process of the same instance, so whatever stops the instance stops the child too, and the child sees it as a gap on the same clock the line's marks use (`CLOCK_BOOTTIME`):
+
+| What happens | Parent main thread | Child | In the line |
+|---|---|---|---|
+| Slow file IO or page faults | `D` | runs | `d_ms` |
+| Network wait, `sleep`, waiting for a thread | `S` | runs | `s_ms` |
+| cgroup CPU quota throttles the instance, or other work takes the CPUs | runnable (`R`), run-queue wait grows | also throttled: gaps, and its own run-queue wait grows | `gap_ms` with `sampler_runq_wait_ms` about as large |
+| cgroup freezer holds the processes | frozen | frozen; a frozen task is not in the run queue | `gap_ms`, `sampler_runq_wait_ms` small |
+| Host stops running the VM's vCPUs and the guest clock goes on (or jumps on resume) | not sampled | not running | `gap_ms`, `sampler_runq_wait_ms` small |
+| Same, but the guest clock stops for the pause | – | – | nothing: the pause is not in the line's wall time either, so there is nothing to explain |
+| Guest suspend and resume | – | – | `gap_ms`, and `suspend_ms` (`CLOCK_BOOTTIME` minus `CLOCK_MONOTONIC` over the window) |
+
+Three numbers about the child itself qualify a gap. `sampler_runq_wait_ms` is the child's own run-queue wait (its `/proc/self/schedstat`): a gap it covers was a wait for a CPU, not a pause. `sampler_majflt` is the child's own major faults: a child that faulted was blocked on IO itself, and that time cannot be told from a pause, so a gap should be read as a pause only when this is 0. The parent does one sample before the fork, which also loads the code the child runs, to make this rare. `sampler_cpu_ms` is the child's CPU time.
+
+**Lifecycle and safety.**
+
+- Start. Only when the process has one thread at load (`"status": "threads"` otherwise): fork copies the calling thread alone, and a copy made while another thread held a lock can hang. `config/boot.rb` runs before any gem starts a thread. If the stat file cannot be opened or parsed, nothing is forked (`"status": "unsupported"`). A failed fork gives `"fork_failed"`. Nothing raises into the app.
+- The child never writes to the app's output. Its stdin, stdout and stderr are reopened on `/dev/null`, it leaves through `exit!` (no `at_exit` handler of the app runs, nothing buffered is written twice), its process title is `hayaoki sampler`, GC is off (a GC would copy every page shared with the parent; the loop allocates little), and `TERM`/`INT`/`HUP`/`QUIT` have the system default action.
+- Stop. The parent never writes to the child. It closes its end of a control pipe; the child sees end-of-file, takes a last sample, writes one line of integers to a result pipe and exits. The parent waits at most 100 ms for the line (`"status": "timeout"` and `SIGKILL` after that) and then reaps the child with a non-blocking wait, retried for at most about 20 ms. `$?` is not changed.
+- If the parent exits, is killed or calls `exec`, the kernel closes the pipe and the child exits within one interval. The child also exits when the parent's thread is gone or a zombie.
+- If the parent forks (Puma cluster master, a daemonizing server), the sampler is ended before the fork so no worker inherits the pipes, and its result is dropped (`"status": "forked"`). A forked worker's line has `"sampler": null`, like the `*_at_load` fields: the samples belong to the process that booted the app. With `preload_app!` the window has normally ended at `initialize_end` before the first worker is forked.
+- Whatever else happens, the child stops by itself after 120 s (`"truncated": true`), writes its line into the pipe and exits; the parent reads it later if it still asks. An instance frozen for an hour and thawed therefore has no sampler running afterwards.
+- `at_exit` ends and reaps a child that is still there (rake, console, a process that wrote no line).
+
+**Platform notes** (none of this is measured yet; the first lines with the field will tell):
+
+| | Expected |
+|---|---|
+| Lambda (Firecracker) | fork works (Puma cluster runs there); real Linux `/proc`. 2 vCPUs during Init, so the child has a CPU. Rails apps end the sampler at `initialize_end`, before the environment can be frozen |
+| Cloud Run gen2 | fork works; real Linux `/proc`; 5–6 CPUs visible at load in §1.3 |
+| Cloud Run gen1 (gVisor) | fork works. gVisor writes its own stat file. File IO is done by the sandbox on behalf of the task, and the task probably shows as `R` meanwhile, so `d_ms` may stay near 0 whatever happened. `sampler_runq_wait_ms` is null (no schedstat) |
+| A process that is pid 1 in its container | no difference: the parent reaps its own child |
+| 1 vCPU | the child wakes 100 times a second for about 0.05 ms each; when the CPU is taken or throttled its samples are late and show as gaps with run-queue wait, which is the correct reading |
+
+**Overhead.** Measured locally on macOS (arm64) with a file standing in for the stat file; Linux could not be run locally, so the Linux values are estimates until the first cloud lines, which carry `fork_us`, `collect_us`, `sampler_cpu_ms` and `samples` for this purpose.
+
+| Cost | Where | Measured (macOS) | Expected on Linux |
+|---|---|---|---|
+| fork | parent, once at load | 0.6 ms | 0.5–2 ms for a process of 30–40 MB |
+| copy-on-write faults | parent, while the child lives | not measured | each page the parent first writes after the fork is copied once: a few thousand pages of the at-load heap, about 3–20 ms in total, and up to that much extra memory (20–30 MB at most) until the child exits |
+| one sample | child | 3 µs for read, parse and add; about 60 µs of CPU per sample with the wake-up | about 0.5 % of one CPU at 10 ms; 30 ms of CPU over a 5 s boot, on another CPU when there is one |
+| ending the sampler | parent, once at `initialize_end` | 2.5–4 ms (mostly waiting for the child's exit in 1 ms steps) | 1–2 ms; at most about 120 ms when the child does not answer |
+
+The fork and the end both fall inside the measured boot (`pre_bundler` and just after `initialize_end`), which is one reason the sampler is opt-in: it is a tool for a few diagnostic cold starts, not for every production boot.
+
+**Not sampled.** `wchan` reads 0 for an unprivileged process on current kernels. `/proc/<pid>/syscall` needs ptrace access to the parent (denied to a child under the common Yama setting) and waits for the thread to leave the CPU. Other threads are not sampled: boot runs on the main thread (§2.2.1).
 
 ---
 
@@ -368,6 +461,7 @@ Evidence keys are stable per rule and documented in the README; `message` is fix
 - Emitter: `limits`, `cpu_at_load_ms` and `phases_cpu_ms` present and numeric on Linux, nil-safe elsewhere; old keys unchanged (schema test from 0.2 still passes).
 - Reader: `INIT_REPORT ... Status: timeout` and `Status: error` lines counted, in plain text, CloudWatch export and JSON-array input.
 - Rules (`test/cold_start_report/hints_test.rb`): a helper builds synthetic lines (`line(platform: :lambda, memory_mb: 1024, ready: 6800, cpu: 5400, bootsnap: false)`) with placeholder values only (service `svc`, revision `svc-00001-abc`, function `fn`). For each rule: fires just over the threshold, silent just under, silent below `G_n` / `G_ready`, ignores implausible starts, `mixed` set when revisions differ.
+- Sampler (`test/insitu/sampler_test.rb`): the aggregation with a given list of (time, state) samples, the state parser on stat lines given as strings, the loop with an injected clock, state source and wait, and the wire format. The child process is tested with a real fork against a file the test writes in place of the stat file (start, result, reap, parent exit, the 120 s limit shortened, a child that does not answer, an app fork). No test reads the real `/proc`; the one check of the real path is the integration test, which expects `status: ok` on Linux and null elsewhere.
 - Calibration test: synthetic sets that copy the per-cell medians of §1 (numbers only) must produce exactly the hints in §3.1. If a threshold changes, this table and the test change together.
 - Formatters: text and JSON for one set with three hints, one with none, one under `G_n`.
 - No real data in fixtures: no IDs, URLs, account numbers, emails or log stream names. A test greps the fixture dir for patterns like long hex or 12-digit numbers.
@@ -410,6 +504,7 @@ Deferred: hints that compare two groups (for example "2048 MB was 1.2 s faster t
 - Thresholds after step 8 (0.4, local 0.3.1 data): unchanged. Measured medians with the report's nearest-rank median: gen1 minimal 0.72 (§1.1 says 0.75: the mean of the two middle lines; two of six lines waited at about 0.4), gen2 0.29, gen1 Redmine 0.59, Lambda Redmine 0.90 / 0.93. Every cell lands where the second §3.1 table says. gen1 minimal stays the borderline case (0.72 against 0.70).
 - Run-queue wait (2026-11-10, issue #12): record `/proc/self/schedstat` field 2 for the main thread at load and at emit (`proc.main_thread_runq_wait_at_load_ms`, `proc.main_thread_runq_wait_ms`), not a per-thread sum and no extra read at other marks; reasons in §2.2.1. The rules only show its median as evidence and add the "k of n lines waited" note; splitting `wait_dominated_boot` into CPU-wait and IO-wait text waits for the cloud check.
 - Split of `wait_dominated_boot` (2026-11-11, issue #12, after §1.2): the hint keeps its id and gets four texts by `wait_kind` (`cpu` at a run-queue share of the off-CPU time ≥ 0.50, `not_cpu` at ≤ 0.20, `mixed` between, `unknown` without the fields), read from the lines that waited. New line fields `majflt`, `io_read_bytes`, `io_rchar`, `steal_ms`, `psi_io_some_ms`, `psi_cpu_some_ms` with `*_at_load` twins are supporting numbers only; file IO is named as the main cause only when PSI IO stall is at least half of the off-CPU time. `delayacct_blkio_ticks` is not recorded. Details in §2.2.2 and §3.2. Open: whether gen2 and Lambda expose PSI and steal, and a cell with a quota below 1 vCPU.
+- Main-thread state sampler (2026-11-11, after §1.3): opt-in by `HAYAOKI_INSITU_SAMPLER=1`, a forked child that samples the main thread's state every 10 ms from load to `initialize_end` and reports `r_ms` / `d_ms` / `s_ms` and its own gaps in a `sampler` object. A child process because a Ruby thread cannot run while the main thread is blocked with the GVL. The report does not read the object yet; rules and thresholds are decided after the first real lines. Details in §2.2.3. Open: all Linux numbers (overhead, gVisor states, whether a gen2 slow boot is `D` or a gap).
 - Q3: yes, record a boolean for `AWS_LWA_ASYNC_INIT` presence (not its value).
 - Q4: flag only (`mixed: true`); users split with `--group-by`.
 - Q5: decide after the 0.4 implementation.

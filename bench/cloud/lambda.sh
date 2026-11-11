@@ -167,7 +167,7 @@ ROLE_ARN="$("${AWS[@]}" iam get-role --role-name "$ROLE" --query Role.Arn --outp
 env_json() { # nonce
   local extra=""
   [[ $ASYNC_INIT == 1 ]] && extra=',"AWS_LWA_ASYNC_INIT":"true"'
-  printf '{"Variables":{"SECRET_KEY_BASE":"%s","HAYAOKI_BENCH_NONCE":"%s"%s}}' "$SKB" "$1" "$extra"
+  printf '{"Variables":{"SECRET_KEY_BASE":"%s","HAYAOKI_BENCH_NONCE":"%s","HAYAOKI_INSITU_SAMPLER":"1"%s}}' "$SKB" "$1" "$extra"
 }
 
 # assert_private FN: no Function URL and no resource-based policy may exist.
