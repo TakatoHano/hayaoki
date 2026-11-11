@@ -241,6 +241,35 @@ class ColdStartReportTest < Minitest::Test
     assert_equal [[], 2], [j["summary"]["hints"], j["summary"]["hints_n"]]
   end
 
+  # gen2-shaped lines that waited off CPU with no run-queue wait: wait_kind not_cpu with counters
+  def wait_input(n)
+    Array.new(n) do |i|
+      JSON.generate({ "hayaoki" => "cold_start", "v" => 1, "status" => "ok", "id" => "w#{i}", "pid" => 1,
+                      "platform" => { "kind" => "cloud_run", "service" => "svc", "revision" => "svc-00001-abc" },
+                      "runtime" => { "bootsnap" => true, "bootsnap_cache" => true },
+                      "limits" => { "cgroup" => "v2", "cpu_quota" => 2.086, "nproc" => 2, "mem_max_mb" => 1024, "sandbox" => nil },
+                      "phases_ms" => { "pre_load" => 400, "to_ready" => 6800, "to_first_response" => 7000 },
+                      "proc" => { "cpu_ms" => 1700, "cpu_at_load_ms" => 100, "gc_time_ms" => 100, "gc_count" => 10, "rss_kb" => 100_000,
+                                  "main_thread_runq_wait_ms" => 3, "main_thread_runq_wait_at_load_ms" => 2,
+                                  "majflt" => 900, "majflt_at_load" => 50, "psi_io_some_ms" => 4000, "psi_io_some_at_load_ms" => 100,
+                                  "steal_ms" => 10, "steal_at_load_ms" => 0 } })
+    end.join("\n") + "\n"
+  end
+
+  def test_wait_split_in_text_and_json
+    r = Hayaoki::ColdStartReport.build([wait_input(4)])
+    out = Hayaoki::ColdStartReport::Formatters::Text.new.format(r)
+    assert_includes out, "wait_dominated_boot"
+    assert_includes out, "It was not waiting for a CPU: the main thread waited in the run queue for 1 ms"
+    assert_includes out, "850 major page faults, system-wide IO stall (PSI) 3.9 s, system-wide steal 10 ms summed over 2 CPUs."
+    assert_includes out, "IO stall time (PSI) covers most of the wait, so file IO is the likely main cause"
+    j = JSON.parse(Hayaoki::ColdStartReport::Formatters::Json.new.format(r))
+    h = j["summary"]["hints"].find { _1["id"] == "wait_dominated_boot" }
+    assert_equal ["not_cpu", 4, 850, 3900, 10], h["evidence"].values_at("wait_kind", "wait_lines", "majflt_p50", "psi_io_some_ms_p50", "steal_ms_p50")
+    %w[non_cpu_ms_p50 runq_share_of_non_cpu_p50 io_read_bytes_p50 psi_cpu_some_ms_p50 unaccounted_ms_p50].each { assert h["evidence"].key?(_1), _1 }
+    assert_match(/It was not waiting for a CPU/, h["message"])
+  end
+
   def test_hints_per_group_and_no_hints_flag
     other = hint_input(3, bootsnap: true).gsub('"memory_mb":1024', '"memory_mb":2048').gsub('"id":"h', '"id":"g')
     code, out, = run_cli(%w[cold-start-report --group-by memory_mb], stdin: hint_input(3) + other)

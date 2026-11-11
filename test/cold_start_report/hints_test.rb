@@ -291,6 +291,139 @@ class HintsTest < Minitest::Test
     refute hint(shared(2, 0.9, limits: cr(quota: 1.972)) + shared(2, 0.9, limits: cr(quota: 1.97)), "cpu_bound_boot").mixed
   end
 
+  # --- wait_dominated_boot split (resource-hints.md §3.2)
+
+  # Lines that waited (share 0.25, wall 6800, 5100 ms off CPU) with a run-queue wait of `runq` ms from
+  # load to emit and optional proc counters: {"majflt" => [at_load, at_emit], ...}.
+  def waited(n, runq:, counters: {}, **kw)
+    shared(n, 0.25, limits: cr(quota: 2.086, sandbox: nil), runq_wait: runq && runq + 2, runq_wait_at_load: runq && 2, **kw).each do |r|
+      counters.each do |k, (at_load, at_emit)|
+        r["proc"][k] = at_emit
+        r["proc"][k.end_with?("_ms") ? k.sub(/_ms\z/, "_at_load_ms") : "#{k}_at_load"] = at_load
+      end
+    end
+  end
+
+  def test_wait_split_not_cpu
+    # gen2 0.4.1 shape: two fast lines, four that waited with 1 ms in the run queue
+    h = hint(shared(2, 0.85, limits: cr(quota: 2.086, sandbox: nil), runq_wait: 3, runq_wait_at_load: 2) + waited(4, runq: 1), "wait_dominated_boot")
+    assert_equal "likely", h.level
+    assert_equal ["not_cpu", 4, 5100, 0.0], h.evidence.values_at("wait_kind", "wait_lines", "non_cpu_ms_p50", "runq_share_of_non_cpu_p50")
+    assert_match(/It was not waiting for a CPU: the main thread waited in the run queue for 1 ms of the 5\.1 s off CPU \(median of 4 lines that waited\)/, h.message)
+    assert_match(/throttling by a CPU quota is unlikely and more CPU is unlikely to help\. Likely causes: file IO .*network calls.*or the platform pausing the instance\./, h.message)
+    refute_match(/CPU throttled before the first request|Over the same span|none of these counters/, h.message)
+    assert_match(/Try the other execution environment/, h.message)
+    assert_equal %w[cpu_allocation image_pull execution_environment], h.cannot_see
+    %w[majflt_p50 io_read_bytes_p50 steal_ms_p50 psi_io_some_ms_p50 psi_cpu_some_ms_p50 unaccounted_ms_p50].each { assert_nil h.evidence.fetch(_1), _1 }
+  end
+
+  def test_wait_split_thresholds
+    kind = ->(runq) { hint(waited(3, runq: runq), "wait_dominated_boot").evidence["wait_kind"] }
+    # 5100 ms off CPU: 20% is 1020, 50% is 2550
+    assert_equal %w[not_cpu mixed mixed cpu], [1020, 1021, 2549, 2550].map(&kind)
+    # a run-queue wait longer than the time off CPU (main thread vs all threads) is clamped
+    assert_equal 1.0, hint(waited(3, runq: 9000), "wait_dominated_boot").evidence["runq_share_of_non_cpu_p50"]
+  end
+
+  def test_wait_split_cpu
+    h = hint(waited(3, runq: 4000), "wait_dominated_boot")
+    assert_equal ["cpu", 0.78], h.evidence.values_at("wait_kind", "runq_share_of_non_cpu_p50")
+    assert_match(/Most of the wait was for a CPU: the main thread waited in the run queue for 4\.0 s of the 5\.1 s off CPU/, h.message)
+    # quota 2.086 (at least 1): more vCPU is not the advice
+    assert_match(/A higher CPU limit or startup CPU boost may help\./, h.message)
+    refute_match(/More CPU \(cpu=1/, h.message)
+    refute_match(/unlikely to help|file IO|execution environment/, h.message)
+    [0.5, nil].each do |q|
+      m = hint(waited(3, runq: 4000, limits: cr(quota: q, sandbox: nil)), "wait_dominated_boot").message
+      assert_match(/More CPU \(cpu=1 or more\) or startup CPU boost may help\./, m, q.inspect)
+    end
+    assert_equal %w[startup_cpu_boost cpu_allocation image_pull execution_environment], h.cannot_see
+    h = hint(waited(3, runq: 4000, platform: :lambda, limits: LAMBDA), "wait_dominated_boot")
+    assert_match(/Init CPU does not follow the memory setting/, h.message)
+    refute_match(/startup CPU boost/, h.message)
+    assert_equal %w[image_pull], h.cannot_see
+  end
+
+  def test_wait_split_mixed
+    h = hint(waited(3, runq: 1800), "wait_dominated_boot")
+    assert_equal "mixed", h.evidence["wait_kind"]
+    assert_match(/Part of the wait was for a CPU: .*1\.8 s of the 5\.1 s off CPU.*More CPU may recover that part\. Other likely causes: file IO/, h.message)
+  end
+
+  # Fewer than 3 waited lines with the run-queue fields (0.3.1 lines, gVisor, forked workers): 0.4.2 text
+  def test_wait_split_unknown_keeps_old_text
+    [waited(3, runq: nil), waited(2, runq: 1) + waited(2, runq: nil)].each do |recs|
+      h = hint(recs, "wait_dominated_boot")
+      assert_equal "unknown", h.evidence["wait_kind"]
+      assert_nil h.evidence["runq_share_of_non_cpu_p50"]
+      assert_match(/\)\. More CPU is unlikely to help\. Likely causes: file IO .*or CPU throttled before the first request\. Try the other/, h.message)
+      refute_match(/run queue/, h.message)
+    end
+    # the lines that did not wait are not read: one fast line with a long run-queue wait changes nothing
+    recs = shared(1, 0.9, limits: cr(quota: 2.086, sandbox: nil), runq_wait: 900, runq_wait_at_load: 0) + waited(3, runq: 1)
+    assert_equal ["not_cpu", 3], hint(recs, "wait_dominated_boot").evidence.values_at("wait_kind", "wait_lines")
+  end
+
+  def test_wait_split_counters_as_evidence
+    c = { "majflt" => [10, 850], "io_read_bytes" => [0, 0], "steal_ms" => [100, 140], "psi_io_some_ms" => [50, 450], "psi_cpu_some_ms" => [5, 9] }
+    h = hint(waited(3, runq: 1, counters: c), "wait_dominated_boot")
+    assert_equal [840, 0, 40, 400, 4, 4659], h.evidence.values_at(*%w[majflt_p50 io_read_bytes_p50 steal_ms_p50 psi_io_some_ms_p50 psi_cpu_some_ms_p50 unaccounted_ms_p50])
+    # read bytes of 0 are not shown (overlay / FUSE report 0); IO stall under half the wait does not name file IO as the cause
+    assert_match(/or the platform pausing the instance\. Over the same span \(median\): 840 major page faults, system-wide IO stall \(PSI\) 400 ms, system-wide steal 40 ms summed over 2 CPUs\. 4\.7 s is in none of these counters: network wait, a paused instance, or file IO that PSI does not count/, h.message)
+    refute_match(/MB read|likely main cause/, h.message)
+    h = hint(waited(3, runq: 1, counters: { "io_read_bytes" => [1_048_576, 85_983_232] }), "wait_dominated_boot")
+    assert_match(/Over the same span \(median\): 81\.0 MB read from storage\./, h.message)
+    refute_match(/none of these counters|likely main cause/, h.message) # no PSI, no steal: nothing to subtract
+    # counters also show with the old text (no run-queue fields), but no remainder
+    h = hint(waited(3, runq: nil, counters: c), "wait_dominated_boot")
+    assert_match(/before the first request\. Over the same span \(median\): 840 major page faults/, h.message)
+    assert_nil h.evidence["unaccounted_ms_p50"]
+  end
+
+  def test_wait_split_names_file_io_or_steal_only_over_half
+    io = ->(stall) { hint(waited(3, runq: 1, counters: { "psi_io_some_ms" => [0, stall], "steal_ms" => [0, 0] }), "wait_dominated_boot").message }
+    assert_match(/IO stall time \(PSI\) covers most of the wait, so file IO is the likely main cause/, io.(2550))
+    refute_match(/network calls/, io.(2550))
+    refute_match(/likely main cause/, io.(2549))
+    assert_match(/network calls/, io.(2549))
+    # steal is summed over the 2 CPUs (nproc 2), so it is compared per CPU: 5100 / 2 is half of 5100 ms
+    st = ->(steal) { hint(waited(3, runq: 1, counters: { "steal_ms" => [0, steal] }), "wait_dominated_boot").message }
+    assert_match(/Steal time covers most of the wait: the host likely did not run the instance's vCPUs/, st.(5100))
+    refute_match(/Steal time covers/, st.(5098))
+    refute_match(/Steal time covers/, st.(2550))
+    # with the wait on a CPU the counters are listed but not read as a cause
+    refute_match(/likely main cause/, hint(waited(3, runq: 4000, counters: { "psi_io_some_ms" => [0, 3000] }), "wait_dominated_boot").message)
+  end
+
+  def test_wait_split_cause_needs_nproc_and_single_tenant
+    io = { "psi_io_some_ms" => [0, 4000] }
+    st = { "steal_ms" => [0, 5100] }
+    # nproc unknown: steal cannot be read per CPU, so no steal sentence (the number still shows)
+    no_nproc = hint(waited(3, runq: 1, counters: st, limits: cr(quota: 2.086, sandbox: nil).merge("nproc" => nil)), "wait_dominated_boot").message
+    refute_match(/Steal time covers/, no_nproc)
+    assert_match(/system-wide steal 5\.1 s\./, no_nproc)
+    # not a Lambda / Cloud Run line: the numbers stay, the cause sentences do not
+    other = ->(c) { waited(3, runq: 1, counters: c).each { _1["platform"]["kind"] = "other" } }
+    m = hint(other.(io.merge(st)), "wait_dominated_boot").message
+    refute_match(/likely main cause|Steal time covers/, m)
+    assert_match(/system-wide IO stall \(PSI\) 4\.0 s, system-wide steal 5\.1 s summed over 2 CPUs\./, m)
+    assert_match(/network calls/, m)
+    assert_match(/likely main cause/, hint(waited(3, runq: 1, counters: io), "wait_dominated_boot").message)
+    assert_match(/likely main cause/, hint(waited(3, runq: 1, counters: io, platform: :lambda, limits: LAMBDA), "wait_dominated_boot").message)
+  end
+
+  def test_wait_counter_text_skips_zero_steal_and_psi_and_zero_remainder
+    c = { "majflt" => [0, 5], "steal_ms" => [0, 0], "psi_io_some_ms" => [0, 0], "psi_cpu_some_ms" => [0, 0] }
+    m = hint(waited(3, runq: 1, counters: c), "wait_dominated_boot").message
+    assert_match(/Over the same span \(median\): 5 major page faults\./, m)
+    refute_match(/system-wide/, m)
+    # off-CPU time fully explained by run queue, PSI and steal: no remainder sentence
+    full = { "psi_io_some_ms" => [0, 4000], "steal_ms" => [0, 2200] }
+    h = hint(waited(3, runq: 1000, counters: full), "wait_dominated_boot")
+    assert_equal 0, h.evidence["unaccounted_ms_p50"]
+    refute_match(/none of these counters/, h.message)
+  end
+
   # --- memory_near_limit
 
   def test_memory_near_limit_threshold
@@ -395,5 +528,53 @@ class HintsTest < Minitest::Test
       assert_equal want, got.to_h { [_1.id, _1.level] }, name
       assert_match(cpu_text, got.find { _1.id == "cpu_bound_boot" }.message, name) if cpu_text
     end
+  end
+
+  # --- wait_dominated_boot split on lines shaped like measured ones (synthetic numbers, no real data)
+
+  # wall = load -> first response; cpu and run-queue delta in ms
+  def split_line(wall, cpu, runq, platform: :cloud_run, limits: cr(quota: 2.086, sandbox: nil), counters: {})
+    r = line(platform: platform, limits: limits, ready: wall + 200 - 400 + 200, cpu_at_load: 100, cpu: 100 + cpu, bootsnap: true, bootsnap_cache: true,
+             runq_wait: runq && runq + 2, runq_wait_at_load: runq && 2)
+    counters.each { |k, v| r["proc"][k] = v }
+    r
+  end
+
+  def test_split_gen2_shape_is_not_cpu
+    recs = [6200, 6400, 6500, 6700].zip([1550, 1600, 1650, 1700], [1, 2, 1, 2]).map { split_line(*_1) } +
+           [split_line(1600, 1350, 1), split_line(1600, 1480, 2)]
+    h = hint(recs, "wait_dominated_boot")
+    assert_equal "likely", h.level
+    assert_equal ["not_cpu", 4], h.evidence.values_at("wait_kind", "wait_lines")
+    assert_operator h.evidence["runq_share_of_non_cpu_p50"], :<, 0.01
+    assert_match(/It was not waiting for a CPU/, h.message)
+    refute_includes ids(recs), "cpu_bound_boot"
+  end
+
+  def test_split_lambda_shape_is_cpu_bound
+    recs = [[4950, 4500, 75], [5000, 4550, 110], [4900, 4450, 144], [5050, 4600, 90]].map { split_line(*_1, platform: :lambda, limits: LAMBDA) }
+    assert_includes ids(recs), "cpu_bound_boot"
+    refute_includes ids(recs), "wait_dominated_boot"
+  end
+
+  # gVisor: the run-queue fields are null, so the kind is unknown and the 0.4.2 wording stays; counters still show
+  def test_split_gvisor_without_runq_is_unknown
+    c = { "majflt" => 10, "majflt_at_load" => 4, "psi_io_some_ms" => 900, "psi_io_some_at_load_ms" => 100 }
+    recs = Array.new(4) { split_line(6400, 1600, nil, limits: cr(quota: 2, sandbox: "gvisor"), counters: c) }
+    h = hint(recs, "wait_dominated_boot")
+    assert_equal "unknown", h.evidence["wait_kind"]
+    assert_match(/More CPU is unlikely to help\. Likely causes: file IO .*or CPU throttled before the first request\./, h.message)
+    assert_match(/6 major page faults, system-wide IO stall \(PSI\) 800 ms/, h.message)
+    assert_match(/gVisor system-call work/, h.message)
+    assert_equal [6, 800], h.evidence.values_at("majflt_p50", "psi_io_some_ms_p50")
+  end
+
+  # proc_delta: nil when either reading is missing or the counter went backwards (reset, wrap)
+  def test_proc_delta
+    ctx = H::Context.new([])
+    d = ->(at_load, at_emit) { ctx.proc_delta({ "proc" => { "majflt" => at_emit, "majflt_at_load" => at_load } }, "majflt") }
+    assert_equal [40, 0, nil, nil, nil], [d.(10, 50), d.(7, 7), d.(50, 10), d.(nil, 5), d.(5, nil)]
+    r = { "proc" => { "psi_io_some_ms" => 900.0, "psi_io_some_at_load_ms" => 100.0, "steal_ms" => 5, "steal_at_load_ms" => 9 } }
+    assert_equal [800.0, nil], [ctx.proc_delta(r, "psi_io_some_ms"), ctx.proc_delta(r, "steal_ms")]
   end
 end

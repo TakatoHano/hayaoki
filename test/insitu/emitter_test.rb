@@ -194,8 +194,10 @@ class InsituEmitterCpuFieldsTest < Minitest::Test
   LIMITS = {"cgroup" => "v2", "cpu_quota" => 2.0, "nproc" => 2, "sandbox" => "gvisor"}.freeze
 
   # marks at wall t (ms after load), cpu at c (ms of CPU)
-  def state(marks, load_cpu: 100.0, limits: LIMITS, load_runq: 12.6)
-    st = I::State.new(env: {}, load_ms: 1000.0, load_cpu_ms: load_cpu, load_runq_wait_ms: load_runq, id: "abcd1234", start_ms: nil, limits: limits)
+  LOAD_WAIT = {"majflt" => 3, "io_read_bytes" => 4096, "io_rchar" => 9000, "steal_ms" => 20.4, "psi_io_some_ms" => 7.6, "psi_cpu_some_ms" => nil}.freeze
+
+  def state(marks, load_cpu: 100.0, limits: LIMITS, load_runq: 12.6, load_wait: LOAD_WAIT)
+    st = I::State.new(env: {}, load_ms: 1000.0, load_cpu_ms: load_cpu, load_runq_wait_ms: load_runq, load_wait: load_wait, id: "abcd1234", start_ms: nil, limits: limits)
     marks.each do |k, (t, c)|
       st.marks[k] = 1000.0 + t
       st.cpu_marks[k] = c
@@ -233,6 +235,43 @@ class InsituEmitterCpuFieldsTest < Minitest::Test
     assert_nil I::Emitter.build(state(FULL, load_runq: nil), "ok", env: {})["proc"]["main_thread_runq_wait_at_load_ms"]
   end
 
+  # Counters behind non-CPU time: at-load values from State (rounded), emit values read now (nil off
+  # Linux or where the file is missing); all twelve keys are always present.
+  def test_wait_counters_in_proc
+    pr = I::Emitter.build(state(FULL), "ok", env: {})["proc"]
+    assert_equal [3, 4096, 9000, 20, 8, nil],
+                 pr.values_at(*%w[majflt_at_load io_read_bytes_at_load io_rchar_at_load steal_at_load_ms psi_io_some_at_load_ms psi_cpu_some_at_load_ms])
+    %w[majflt io_read_bytes io_rchar steal_ms psi_io_some_ms psi_cpu_some_ms].each do |k|
+      assert pr.key?(k), k
+      assert(pr[k].nil? || pr[k].is_a?(Integer), k)
+      assert_nil pr[k], k unless RUBY_PLATFORM.include?("linux")
+    end
+    pr = I::Emitter.build(state(FULL, load_wait: nil), "ok", env: {})["proc"]
+    assert_nil pr["majflt_at_load"]
+    assert pr.key?("steal_at_load_ms")
+  end
+
+  # An unexpected error in the counters nulls only their fields; the line is still built
+  def test_wait_counters_error_nulls_fields_only
+    orig = I.method(:wait_counters)
+    I.define_singleton_method(:wait_counters) { {} }
+    h = I::Emitter.build(state(FULL), "ok", env: {})
+    assert_equal "cold_start", h["hayaoki"]
+    %w[majflt io_read_bytes io_rchar steal_ms psi_io_some_ms psi_cpu_some_ms].each { assert h["proc"].key?(_1) && h["proc"][_1].nil?, _1 }
+  ensure
+    I.define_singleton_method(:wait_counters, orig)
+  end
+
+  # Insitu.wait_counters rescues what ProcFS raises
+  def test_insitu_wait_counters_rescues
+    pf = I::ProcFS
+    orig = pf.method(:wait_counters)
+    pf.define_singleton_method(:wait_counters) { |**| raise "boom" }
+    assert_equal({}, I.wait_counters)
+  ensure
+    pf.define_singleton_method(:wait_counters, orig)
+  end
+
   def test_ready_from_initialize_when_no_probe
     marks = FULL.reject { |k, _| k == :first_probe }
     h = I::Emitter.build(state(marks), "ok", facts: FACTS, env: {})
@@ -265,6 +304,7 @@ class InsituEmitterCpuFieldsTest < Minitest::Test
     h = I::Emitter.build(st, "ok", env: {})
     assert_nil h["proc"]["cpu_at_load_ms"]
     assert_nil h["proc"]["main_thread_runq_wait_at_load_ms"] # the child's schedstat restarts at fork
+    %w[majflt_at_load io_read_bytes_at_load steal_at_load_ms psi_io_some_at_load_ms].each { assert_nil h["proc"][_1], _1 }
     assert_equal "probe", h["ready_source"]
     assert_nil h["phases_cpu_ms"]["load_to_ready"]
   end

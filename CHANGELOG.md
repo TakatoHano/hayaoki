@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- In-situ lines gain `proc.majflt`, `io_read_bytes`, `io_rchar`, `steal_ms`, `psi_io_some_ms`, `psi_cpu_some_ms` and their `*_at_load` values (null where the source is missing, and the at-load values are null in a forked worker). Steal and PSI are system-wide. The line version stays 1.
+- `wait_dominated_boot` evidence has `wait_kind` (`cpu`, `not_cpu`, `mixed`, `unknown`) with a different text for each, the medians of the new counters and `unaccounted_ms_p50`. `unknown` (lines without run-queue fields) keeps the 0.4.2 text, plus the counter sentence when the lines have counters. The counter sentence labels PSI and steal as system-wide, shows steal as summed over the CPUs, and leaves out steal and PSI when their median is 0. The file IO and steal cause sentences are written only on Lambda and Cloud Run, steal is compared per CPU (`limits.nproc`), and the remainder sentence only when it is above 0. The `cpu` text suggests more CPU only when the quota is unknown or below 1.
+
 ## [0.4.2] - 2026-11-11
 
 ### Fixed

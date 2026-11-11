@@ -7,6 +7,11 @@ module Hayaoki
       GC_SHARE = 0.20
       CPU_BOUND_BUSY = 0.70 # median busy at or above: cpu_bound_boot
       WAIT_BUSY = 0.50      # median busy at or below: wait_dominated_boot
+      # wait_dominated_boot split (resource-hints.md §3.2): median over the lines that waited of
+      # main-thread run-queue wait / time off CPU.
+      RUNQ_CPU_WAIT = 0.50  # at or above: the wait was mostly for a CPU
+      RUNQ_NOT_CPU = 0.20   # at or below: the wait was not for a CPU
+      WAIT_MAIN_CAUSE = 0.50 # PSI io stall (or steal) / time off CPU at or above: named as the likely main cause
       MEM_P50 = 0.80        # median rss / limit
       MEM_ANY = 0.90        # any single line rss / limit
 
@@ -108,25 +113,116 @@ module Hayaoki
         { level: level, n: s[:n], evidence: cpu_evidence(s), message: msg, cannot_see: cannot_see }
       end
 
+      WAIT_COUNTERS = %w[majflt io_read_bytes steal_ms psi_io_some_ms psi_cpu_some_ms].freeze
+
+      # What the time off CPU was, over the lines that waited (busy at or under WAIT_BUSY, read from
+      # load). :kind is "cpu" / "not_cpu" / "mixed" from the run-queue share, or nil when fewer than
+      # MIN_N of those lines carry the run-queue fields (0.3.1 lines, gVisor, forked workers).
+      # The counters are medians of emit - load; :unaccounted is what run queue, IO stall and steal
+      # leave over, only where a line has all three.
+      def self.wait_stats(c, s)
+        rows = s[:set].filter_map do |r|
+          non = c.non_cpu_ms(r) or next
+          next if c.busy(c.share(r)[:share], s[:quota]) > WAIT_BUSY
+          h = { non_cpu: non, runq: c.main_thread_runq_wait_ms(r) }
+          WAIT_COUNTERS.each { |k| h[k] = c.proc_delta(r, k) }
+          h
+        end
+        med = ->(set, &f) { median(set.filter_map(&f)) }
+        rq = rows.select { _1[:runq] }
+        out = { lines: rows.size, runq_lines: rq.size, non_cpu: med.(rows) { _1[:non_cpu] } }
+        WAIT_COUNTERS.each { |k| out[k] = med.(rows) { _1[k] } }
+        out[:io_share] = med.(rows) { |h| h["psi_io_some_ms"] && [h["psi_io_some_ms"].to_f / h[:non_cpu], 1.0].min }
+        nproc = median(s[:set].filter_map { |r| c.num(r.dig("limits", "nproc")) })
+        out[:nproc] = nproc&.positive? ? nproc : nil
+        # steal is summed over all CPUs, so it is compared per CPU; without nproc there is no share
+        out[:steal_share] = out[:nproc] && med.(rows) { |h| h["steal_ms"] && [h["steal_ms"].to_f / out[:nproc] / h[:non_cpu], 1.0].min }
+        # PSI and steal are system-wide: they name a cause only where the instance is alone on its
+        # VM or sandbox (Lambda, Cloud Run)
+        out[:single_tenant] = c.lambda? || s[:set].count { _1.dig("platform", "kind") == "cloud_run" } * 2 >= s[:set].size
+        out[:unaccounted] = med.(rq) { |h| h["psi_io_some_ms"] && h["steal_ms"] && [h[:non_cpu] - h[:runq] - h["psi_io_some_ms"] - h["steal_ms"], 0].max }
+        return out if rq.size < MIN_N
+        share = median(rq.map { [_1[:runq].to_f / _1[:non_cpu], 1.0].min })
+        out.merge(runq: median(rq.map { _1[:runq] }), runq_non_cpu: median(rq.map { _1[:non_cpu] }), runq_share: share,
+                  kind: share >= RUNQ_CPU_WAIT ? "cpu" : (share <= RUNQ_NOT_CPU ? "not_cpu" : "mixed"))
+      end
+
+      def self.wait_evidence(w)
+        { "wait_kind" => w[:kind] || "unknown", "wait_lines" => w[:lines], "non_cpu_ms_p50" => Stats.rnd(w[:non_cpu]),
+          "runq_share_of_non_cpu_p50" => w[:runq_share]&.round(2),
+          "majflt_p50" => w["majflt"], "io_read_bytes_p50" => w["io_read_bytes"], "steal_ms_p50" => Stats.rnd(w["steal_ms"]),
+          "psi_io_some_ms_p50" => Stats.rnd(w["psi_io_some_ms"]), "psi_cpu_some_ms_p50" => Stats.rnd(w["psi_cpu_some_ms"]),
+          "unaccounted_ms_p50" => Stats.rnd(w[:unaccounted]) }
+      end
+
+      # " Over the same span (median): ..." or "" when no line has the counters. io_read_bytes is left
+      # out at 0: overlay, FUSE and virtiofs report 0 whatever was read.
+      def self.wait_counter_text(w)
+        parts = []
+        parts << "#{w["majflt"]} major page faults" if w["majflt"]
+        parts << "#{(w["io_read_bytes"] / 1_048_576.0).round(1)} MB read from storage" if w["io_read_bytes"]&.positive?
+        parts << "system-wide IO stall (PSI) #{span_text(w["psi_io_some_ms"])}" if w["psi_io_some_ms"]&.positive?
+        if w["steal_ms"]&.positive?
+          parts << "system-wide steal #{span_text(w["steal_ms"])}#{" summed over #{w[:nproc].round} CPUs" if w[:nproc]}"
+        end
+        parts.empty? ? "" : " Over the same span (median): #{parts.join(", ")}."
+      end
+
+      WAIT_CAUSES = "file IO (no bootsnap cache, many small files, lazily pulled image layers), " \
+                    "network calls during boot (DB, secrets, HTTP in initializers)"
+
+      # One id, four texts (evidence "wait_kind"): the trigger is the same, and the split depends on
+      # fields that old lines and gVisor do not have. "unknown" is the 0.4.2 text.
       rule("wait_dominated_boot") do |c|
         s = cpu_stats(c) or next
         next if s[:busy] > WAIT_BUSY
         pct = (s[:busy] * 100).round
         lambda = c.lambda?
         gvisor = c.gvisor?(s[:set])
+        w = wait_stats(c, s)
+        kind = w[:kind]
         msg = "Boot likely spent most of its time waiting, not computing: on CPU #{pct}% of the time #{span(s)} " \
-              "(median of #{s[:n]}; CPU #{sec(s[:cpu_ms])} s of #{sec(s[:wall_ms])} s). More CPU is unlikely to help. " \
-              "Likely causes: file IO (no bootsnap cache, many small files, lazily pulled image layers), " \
-              "network calls during boot (DB, secrets, HTTP in initializers), or CPU throttled before the first request."
+              "(median of #{s[:n]}; CPU #{sec(s[:cpu_ms])} s of #{sec(s[:wall_ms])} s)."
+        runq = kind && "the main thread waited in the run queue for #{span_text(w[:runq])} of the #{span_text(w[:runq_non_cpu])} off CPU " \
+                       "(median of #{w[:runq_lines]} lines that waited)"
+        case kind
+        when "cpu"
+          msg += " Most of the wait was for a CPU: #{runq}. A CPU quota or other work on the same CPUs likely held boot back."
+          msg += if lambda
+                   " Init CPU does not follow the memory setting, so the remaining fix is less CPU work at boot: see `hayaoki boot-report`."
+                 elsif s[:quota].nil? || s[:quota] < 1
+                   " More CPU (cpu=1 or more) or startup CPU boost may help."
+                 else
+                   " A higher CPU limit or startup CPU boost may help."
+                 end
+        when "not_cpu"
+          msg += " It was not waiting for a CPU: #{runq}, so throttling by a CPU quota is unlikely and more CPU is unlikely to help."
+          if w[:single_tenant] && w[:io_share] && w[:io_share] >= WAIT_MAIN_CAUSE
+            msg += " IO stall time (PSI) covers most of the wait, so file IO is the likely main cause (no bootsnap cache, many small files, lazily pulled image layers)."
+          elsif w[:single_tenant] && w[:steal_share] && w[:steal_share] >= WAIT_MAIN_CAUSE
+            msg += " Steal time covers most of the wait: the host likely did not run the instance's vCPUs for that time, which the app cannot change."
+          else
+            msg += " Likely causes: #{WAIT_CAUSES}, or the platform pausing the instance."
+          end
+        when "mixed"
+          msg += " Part of the wait was for a CPU: #{runq}. More CPU may recover that part. Other likely causes: #{WAIT_CAUSES}."
+        else
+          msg += " More CPU is unlikely to help. Likely causes: #{WAIT_CAUSES}, or CPU throttled before the first request."
+        end
+        msg += wait_counter_text(w)
+        if kind && kind != "cpu" && w[:unaccounted]&.positive?
+          msg += " #{span_text(w[:unaccounted])} is in none of these counters: network wait, a paused instance, or file IO that PSI does not count (FUSE, virtiofs)."
+        end
         cannot_see = %w[image_pull]
         unless lambda
-          msg += " Try the other execution environment (gen1/gen2); file IO cost differs between them."
-          msg += " The CPU quota is not visible; a quota below 1 vCPU would look like waiting." unless s[:quota]
+          msg += " Try the other execution environment (gen1/gen2); file IO cost differs between them." unless kind == "cpu"
+          msg += " The CPU quota is not visible; a quota below 1 vCPU would look like waiting." unless s[:quota] || kind
           cannot_see = %w[cpu_allocation image_pull]
+          cannot_see.unshift("startup_cpu_boost") if kind == "cpu"
           cannot_see << "execution_environment" unless gvisor
         end
         msg += " gVisor system-call work is probably not counted as process CPU." if gvisor
-        { level: "likely", n: s[:n], evidence: cpu_evidence(s), message: msg, cannot_see: cannot_see }
+        { level: "likely", n: s[:n], evidence: cpu_evidence(s).merge(wait_evidence(w)), message: msg, cannot_see: cannot_see }
       end
 
       # Reads every ok line: RSS at emit does not depend on the start. The limit is limits.mem_max_mb,
