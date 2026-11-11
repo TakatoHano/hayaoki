@@ -33,4 +33,10 @@ jobs:
             echo '```'
             ruby bench/insitu_overhead.rb --runs 15 --sampler
             echo '```'
+            echo
+            echo "## per-step breakdown (issue #22)"
+            echo
+            echo '```'
+            ruby bench/insitu_breakdown.rb --runs 15
+            echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
