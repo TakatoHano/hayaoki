@@ -27,4 +27,10 @@ jobs:
             echo '```'
             ruby bench/insitu_overhead.rb --runs 15
             echo '```'
+            echo
+            echo "## with the sampler (B also sets HAYAOKI_INSITU_SAMPLER=1)"
+            echo
+            echo '```'
+            ruby bench/insitu_overhead.rb --runs 15 --sampler
+            echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
