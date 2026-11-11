@@ -55,9 +55,9 @@ CPU share here is from load: `(cpu_ms - cpu_at_load_ms) / (to_first_response - p
 
 | Cell | ok (plausible start) | ready p50 | CPU share from load, median | `limits` | RSS p50 | GC / CPU |
 |---|---|---|---|---|---|---|
-| CR gen1 minimal | 6 (6) | 8.0 s | 0.75 | cgroup v1, cpu_quota 2, mem 1024, sandbox gvisor | 144 MB | 6% |
+| CR gen1 minimal | 6 (6) | 5.7 s | 0.75 | cgroup v1, cpu_quota 2, mem 1024, sandbox gvisor | 144 MB | 6% |
 | CR gen2 minimal | 6 (0) | n/a (start rejected) | 0.29 (5 lines 0.25–0.29; 1 line 0.77) | cgroup v1, cpu_quota 1.97, mem 1024, sandbox null | 89 MB | 9% |
-| CR gen1 Redmine | 6 (6) | 14.6 s | 0.59 | as gen1 minimal | 280 MB | 6% |
+| CR gen1 Redmine | 6 (6) | 13.6 s | 0.59 | as gen1 minimal | 280 MB | 6% |
 | Lambda Redmine 1024 | 5 (5) | 5.8 s | 0.92 | all null (no cgroup files) | 230 MB | 9% |
 | Lambda Redmine 2048 | 6 (6) | 5.7 s | 0.94 | all null | 229 MB | 9% |
 
@@ -66,7 +66,7 @@ What changed in our understanding:
 - **The new fields work.** gen1 shows `sandbox: gvisor`, gen2 does not, so the heuristic separates them. Both expose cgroup v1 files. `cpu_quota` is 2 at load on a cpu=1 service: startup CPU boost is visible from inside (§4).
 - **gen2 waits.** From load, gen2 is on CPU only about 29% of the time, against 75% on gen1 for the same image. `cpu_at_load_ms` made this cell readable, as expected in §3.1. The one 0.77 line is probably the instance that started at deploy time.
 - **Lambda Init does not follow the memory ratio.** At 1024 MB the share is 0.92, above the nominal 0.58 vCPU, which a quota would not allow. 2048 MB is not faster (5.8 vs 5.7 s; the 0.2 run showed 6.8 vs 5.6 s, which was probably runner variance). This matches reports that Init gets host CPU independent of the memory setting for its first 10 s ([L9], [L10]). Not in the official Lambda docs.
-- Cloud Run run-to-run variance is large: gen1 minimal ready p50 was 4.9 s in the 0.2 run and 8.0 s now, with the same image and settings. Hints use shares and medians, not absolute times, partly for this reason.
+- Cloud Run run-to-run variance is large: gen1 minimal ready ranged from 5.3 s to 14.2 s within the 6 lines of this run (p50 5.7 s; 4.9 s in the 0.2 run), with the same image and settings. Hints use shares and medians, not absolute times, partly for this reason.
 - Memory and GC stay far from the thresholds (RSS ≤ 280 MB of 1024 MB; GC 6–9%).
 
 ### 1.2 Run-queue wait in 0.4.1 / 0.4.2 lines (2026-11-11)
