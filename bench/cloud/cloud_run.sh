@@ -133,7 +133,7 @@ else
     --no-allow-unauthenticated --ingress all \
     --cpu "$CPU" --memory "$MEMORY" --cpu-boost --execution-environment "$EXEC_ENV" \
     --min-instances 0 --max-instances "$MAXI" --concurrency "$CONC" --port 8080 --timeout 60 \
-    --set-env-vars "SECRET_KEY_BASE=$(cat "$OUT/secret_key_base"),HAYAOKI_BENCH_SAMPLE=0"
+    --set-env-vars "SECRET_KEY_BASE=$(cat "$OUT/secret_key_base"),HAYAOKI_BENCH_SAMPLE=0,HAYAOKI_INSITU_SAMPLER=1"
   [[ -f "$OUT/start.txt" ]] || date -u +%Y-%m-%dT%H:%M:%SZ > "$OUT/start.txt"
 fi
 # Only after the new revision is serving: older revisions may still reference the replaced image.

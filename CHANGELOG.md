@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `HAYAOKI_INSITU_SAMPLER=1` (off by default, Linux only): a forked child samples the state of the main thread every 10 ms from load to the end of `initialize!`. The line gains a `sampler` object with `r_ms`, `d_ms` (blocked on file IO or page faults), `s_ms` (sleeping, for example on the network), `gap_ms` (the sampler itself did not run: a paused or CPU-starved instance) and the sampler's own cost. The key is null when the sampler is off and in a forked worker. The line version stays 1. See docs/design/resource-hints.md §2.2.3.
+
 ### Fixed
 
 - `wait_dominated_boot` no longer shows `majflt`, `io_read_bytes` and steal on gVisor (Cloud Run gen1), where they are always 0.

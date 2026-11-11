@@ -46,7 +46,7 @@ class InsituIntegrationTest < Minitest::Test
     l = JSON.parse(raw)
 
     assert_equal %w[hayaoki v severity message status id pid worker start_at start_source ready_source platform
-                    runtime marks_ms phases_ms phases_cpu_ms eager_top first_request proc limits], l.keys
+                    runtime marks_ms phases_ms phases_cpu_ms eager_top first_request proc limits sampler], l.keys
     assert_equal ["cold_start", 1, "INFO", "ok"], l.values_at("hayaoki", "v", "severity", "status")
     assert_match(/\A\h{8}\z/, l["id"])
     assert_equal false, l["worker"]
@@ -91,6 +91,23 @@ class InsituIntegrationTest < Minitest::Test
     pr = l["proc"]
     %w[cpu_ms gc_count gc_time_ms features].each { assert_kind_of Integer, pr[_1], _1 }
     assert_includes [true, false], pr["i18n_loaded"]
+  end
+
+  # HAYAOKI_INSITU_SAMPLER=1: on Linux a forked child samples the main thread until initialize_end;
+  # elsewhere the key stays null. The app's own line count and stderr are checked by run_app.
+  def test_sampler_opt_in
+    lines = run_app(["/"], "HAYAOKI_INSITU_SAMPLER" => "1")
+    assert_equal 1, lines.size, lines.join
+    sm = JSON.parse(lines[0])["sampler"]
+    unless RUBY_PLATFORM.include?("linux")
+      assert_nil sm
+      return
+    end
+    assert_equal ["ok", "initialize_end", 10], sm.values_at("status", "until", "interval_ms"), sm.inspect
+    assert_operator sm["samples"], :>=, 2
+    assert_in_delta sm["wall_ms"], sm.values_at("r_ms", "d_ms", "s_ms", "other_ms", "gap_ms").sum, 3
+    assert_operator sm["r_ms"], :>, 0 # boot is mostly CPU work on the main thread
+    %w[sampler_cpu_ms fork_us collect_us].each { assert_kind_of Integer, sm[_1], _1 }
   end
 
   def test_no_request_emits_at_exit

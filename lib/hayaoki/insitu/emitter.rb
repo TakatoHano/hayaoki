@@ -105,6 +105,7 @@ module Hayaoki
           "first_request" => state.first_request,
           "proc" => facts || proc_facts(state, features, Clock.clk_tck),
           "limits" => limits(state),
+          "sampler" => sampler(state),
         )
         h
       end
@@ -130,6 +131,16 @@ module Hayaoki
         {"cgroup" => l["cgroup"], "cpu_quota" => l["cpu_quota"], "nproc" => l["nproc"],
          "mem_max_mb" => Limits.mem_max_mb, "sandbox" => l["sandbox"]}
       rescue StandardError, LoadError
+        nil
+      end
+
+      # The "sampler" object (resource-hints.md §2.2.3): nil when the sampler is off or not on Linux,
+      # and in a forked child (the samples are of the process that booted the app). If nothing ended
+      # the sampler before (no initialize!, or a boot error), this ends it: "until" is then "emit".
+      def sampler(state)
+        return nil if state.marks.key?(:forked)
+        state.sampler&.result("emit")
+      rescue StandardError
         nil
       end
 
