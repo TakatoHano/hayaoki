@@ -10,7 +10,7 @@ private services, produce cold starts, collect the `hayaoki` `cold_start` log li
 | `cloud_run.sh` | build, deploy a private Cloud Run service, sample, collect, report |
 | `lambda.sh` | build, push to private ECR, create one function per memory size, sample, collect, report |
 | `teardown.sh` | delete everything the scripts created |
-| `apps/gen_minimal.sh` | `rails new --minimal` app as in `.github/workflows/templates.yml`, with `hayaoki` 0.4.5 from rubygems |
+| `apps/gen_minimal.sh` | `rails new --minimal` app as in `.github/workflows/templates.yml`, with `hayaoki` 0.4.6 from rubygems |
 | `apps/redmine/Dockerfile` | Redmine 7.0, SQLite migrated at build, `hayaoki` added; targets `cloud_run` and `lambda` |
 
 ## Prerequisites on your machine
